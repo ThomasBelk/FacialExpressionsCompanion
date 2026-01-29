@@ -23,6 +23,7 @@ class MainWindow(QMainWindow):
         self.video_label.setMinimumSize(1, 1)
         self.camera = CameraThread(0)
         self.camera.frame_ready.connect(self.updateFrame)
+        self.camera.face_data_ready.connect(self.updateFaceData)
         self.camera.start()
 
         self.initUI()
@@ -82,6 +83,12 @@ class MainWindow(QMainWindow):
                 Qt.SmoothTransformation
             )
         )
+
+    def updateFaceData(self, blendshapes):
+        print([
+            (c.category_name, round(c.score, 2))
+            for c in blendshapes[:5]
+        ])
 
     def closeEvent(self, event: QCloseEvent):
         self.camera.stop()
