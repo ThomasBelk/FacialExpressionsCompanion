@@ -8,7 +8,9 @@ from mediapipe.tasks.python.vision import (
     FaceLandmarker,
     FaceLandmarkerOptions,
     RunningMode,
-
+    drawing_utils,
+    drawing_styles,
+    FaceLandmarksConnections
 )
 
 
@@ -41,6 +43,36 @@ class CameraThread(QThread):
 
         landmarker = FaceLandmarker.create_from_options(options)
 
+        lips_style = drawing_utils.DrawingSpec(
+            color=(255, 0, 0),
+            thickness=1
+        )
+
+        left_eyebrow_style = drawing_utils.DrawingSpec(
+            color=(0, 255, 255),
+            thickness=1
+        )
+
+        right_eyebrow_style = drawing_utils.DrawingSpec(
+            color=(255, 255, 0),
+            thickness=1
+        )
+
+        left_iris_style = drawing_utils.DrawingSpec(
+            color=(0, 0, 255),
+            thickness=1
+        )
+
+        right_iris_style = drawing_utils.DrawingSpec(
+            color=(0, 255, 0),
+            thickness=1
+        )
+
+        face_outline_style = drawing_utils.DrawingSpec(
+            color=(128, 0, 128),
+            thickness=1
+        )
+
         while self.running:
             ret, frame = cap.read()
             if not ret:
@@ -60,11 +92,73 @@ class CameraThread(QThread):
                 self.timestamp_ms
             )
 
-            self.frame_ready.emit(frame)
+            # self.frame_ready.emit(frame)
             if result.face_blendshapes:
                 self.face_data_ready.emit(result.face_blendshapes[0])
 
+            if result.face_landmarks:
+                for face_landmarks in result.face_landmarks:
+                    drawing_utils.draw_landmarks(
+                        image=rgb,
+                        landmark_list=face_landmarks,
+                        connections=FaceLandmarksConnections.FACE_LANDMARKS_TESSELATION,
+                        landmark_drawing_spec=None,
+                        connection_drawing_spec=drawing_styles.get_default_face_mesh_tesselation_style()
+                    )
+                    drawing_utils.draw_landmarks(
+                        image=rgb,
+                        landmark_list=face_landmarks,
+                        connections=FaceLandmarksConnections.FACE_LANDMARKS_LIPS,
+                        landmark_drawing_spec=None,
+                        connection_drawing_spec=lips_style
+                    )
+                    drawing_utils.draw_landmarks(
+                        image=rgb,
+                        landmark_list=face_landmarks,
+                        connections=FaceLandmarksConnections.FACE_LANDMARKS_LEFT_EYEBROW,
+                        landmark_drawing_spec=None,
+                        connection_drawing_spec=left_eyebrow_style
+                    )
+                    drawing_utils.draw_landmarks(
+                        image=rgb,
+                        landmark_list=face_landmarks,
+                        connections=FaceLandmarksConnections.FACE_LANDMARKS_RIGHT_EYEBROW,
+                        landmark_drawing_spec=None,
+                        connection_drawing_spec=right_eyebrow_style
+                    )
+                    drawing_utils.draw_landmarks(
+                        image=rgb,
+                        landmark_list=face_landmarks,
+                        connections=FaceLandmarksConnections.FACE_LANDMARKS_LEFT_IRIS,
+                        landmark_drawing_spec=None,
+                        connection_drawing_spec=left_iris_style
+                    )
+                    drawing_utils.draw_landmarks(
+                        image=rgb,
+                        landmark_list=face_landmarks,
+                        connections=FaceLandmarksConnections.FACE_LANDMARKS_RIGHT_IRIS,
+                        landmark_drawing_spec=None,
+                        connection_drawing_spec=right_iris_style
+                    )
+                    drawing_utils.draw_landmarks(
+                        image=rgb,
+                        landmark_list=face_landmarks,
+                        connections=FaceLandmarksConnections.FACE_LANDMARKS_FACE_OVAL,
+                        landmark_drawing_spec=None,
+                        connection_drawing_spec=face_outline_style
+                    )
+            frame = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            self.frame_ready.emit(frame)
+
         cap.release()
+
+    def draw_face_landmarks(self, frame, landmarks):
+        h, w, _ = frame.shape
+
+        for lm in landmarks:
+            x = int(lm.x * w)
+            y = int(lm.y * h)
+            cv2.circle(frame, (x, y), 1, (0, 255, 0), -1)
 
     def stop(self):
         self.running = False
