@@ -6,13 +6,35 @@ from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QPixmap
 
 from camera_thread import CameraThread
+from eye_direction import AxisCalibrator
 from image_utils import cv_frame_to_qimage
+
+import eye_direction as d
+import socket
+import json
+
+SERVER_IP = "127.0.0.1"   # or server address
+SERVER_PORT = 25590
+FACE_ID = "fd32dab3-8276-4f96-8595-99c1199d1eae"
+
+def send_face_packet(sock, faceId, lookDir):
+    packet = {
+        "faceId": faceId,
+        "lookDir": lookDir,
+        "blendshapes": {
+            "hi": 2
+        },
+    }
+
+    data = json.dumps(packet).encode("utf-8")
+    sock.sendto(data, (SERVER_IP, SERVER_PORT))
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.settings = QSettings("ThetaBork", "FacialExpressionsCompanion")
         self.containerWidget = QWidget()
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
 
         self.video_label = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
@@ -24,7 +46,13 @@ class MainWindow(QMainWindow):
         self.camera = CameraThread(0)
         self.camera.frame_ready.connect(self.updateFrame)
         self.camera.face_data_ready.connect(self.updateFaceData)
+        self.camera.iris_data_ready.connect(self.updateEyeData)
         self.camera.start()
+
+        self.x_cal = AxisCalibrator(adapt_rate=0.05) # x_cal can move faster cause the default range is wider
+        self.y_cal = AxisCalibrator(adapt_rate=0.01) # want smaller changes. Will take slightly longer to calibrate
+
+        self.tracker = d.EyeTracker(warmup_frames=300)
 
         self.initUI()
 
@@ -85,10 +113,103 @@ class MainWindow(QMainWindow):
         )
 
     def updateFaceData(self, blendshapes):
-        print([
-            (c.category_name, round(c.score, 2))
-            for c in blendshapes[:5]
-        ])
+        # print(self.gaze_from_blendshapes(blendshapes))
+        # print([
+        #     (c.category_name, round(c.score, 2))
+        #     for c in blendshapes[:5]
+        # ])
+        pass
+
+    def updateEyeData(self, landmarks):
+        x,y = d.eye_direction_from_landmarks(landmarks, d.right_eye_iris_center_id, d.right_eye_left_id, d.right_eye_right_id, d.right_eye_top_id, d.right_eye_bottom_id, self.tracker)
+        lookdir = self.eye_enum(x, y)
+        print(lookdir)
+        send_face_packet(self.sock, FACE_ID, lookdir)
+
+
+    def eye_enum(self, x, y, deadzone=0.25):
+        vert = None
+        horiz = None
+        if y > self.tracker.y_center + deadzone:
+            vert = "up"
+        elif y < self.tracker.y_center - deadzone:
+            vert = "down"
+
+        if x < -deadzone:
+            horiz = "right"
+        elif x > deadzone:
+            horiz = "left"
+
+        if vert and horiz:
+            return f"{vert}{horiz}"
+        elif vert:
+            return vert
+        elif horiz:
+            return horiz
+
+        return "center"
+
+
+        # if abs(x) < deadzone and abs(y) < deadzone:
+        #     return "CENTER" + str(y)
+        #
+        # vertical = ""
+        # horizontal = ""
+        #
+        # if y < -deadzone:
+        #     vertical = "UP" +str(y)
+        # elif y > 0.1:
+        #     vertical = "DOWN" + str(y)
+        #
+        # if x < -deadzone:
+        #     horizontal = "RIGHT"
+        # elif x > deadzone:
+        #     horizontal = "LEFT"
+        #
+        # if vertical and horizontal:
+        #     return f"{vertical}_{horizontal}"
+        # elif vertical:
+        #     return vertical
+        # elif horizontal:
+        #     return horizontal
+        #
+        # return "CENTER"
+
+    def classify_gaze(self, x, y):
+        CENTER_DEADZONE = 0.25
+        DIAGONAL_RATIO = 0.6
+        if abs(x) < CENTER_DEADZONE and abs(y) < CENTER_DEADZONE:
+            return "center"
+
+        horiz = "left" if x < 0 else "right"
+        vert = "down" if y < 0 else "up"
+
+        # Diagonal if both components are strong
+        if abs(x) > DIAGONAL_RATIO and abs(y) > DIAGONAL_RATIO:
+            return vert + horiz
+
+        # Otherwise cardinal
+        if abs(x) > abs(y):
+            return horiz
+        else:
+            return vert
+
+    def gaze_from_blendshapes(self, blendshapes):
+        bs = {c.category_name: c.score for c in blendshapes}
+        x = (
+                    (bs.get("eyeLookOutLeft", 0) - bs.get("eyeLookInLeft", 0)) +
+                    (bs.get("eyeLookOutRight", 0) - bs.get("eyeLookInRight", 0))
+            ) * 0.5
+
+        print("X = " + str(x))
+
+        y = (
+                    (bs.get("eyeLookUpLeft", 0) - bs.get("eyeLookDownLeft", 0)) +
+                    (bs.get("eyeLookUpRight", 0) - bs.get("eyeLookDownRight", 0))
+            ) * 0.5
+
+        return self.classify_gaze(x, y)
+
 
     def closeEvent(self, event: QCloseEvent):
         self.camera.stop()
