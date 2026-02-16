@@ -71,8 +71,7 @@ class MainWindow(QMainWindow):
         self.video_label.setMinimumSize(1, 1)
         self.camera = CameraThread(0)
         self.camera.frame_ready.connect(self.updateFrame)
-        self.camera.face_data_ready.connect(self.updateFaceData)
-        self.camera.iris_data_ready.connect(self.updateEyeData)
+        self.camera.tracking_data_ready.connect(self.handleTrackingData)
         self.camera.start()
 
         self.tracker = d.EyeTracker(warmup_frames=300)
@@ -140,19 +139,17 @@ class MainWindow(QMainWindow):
             )
         )
 
-    def updateFaceData(self, blendshapes):
-        # print(self.gaze_from_blendshapes(blendshapes))
-        # print([
-        #     (c.category_name, round(c.score, 2))
-        #     for c in blendshapes[:5]
-        # ])
-        pass
+    def handleTrackingData(self, data):
+        lookdir = "center"
+        blendshapes = {"temp": -1}
+        if data[0] and len(data[0]) > 0:
+            x,y = d.eye_direction_from_landmarks(data[0], d.right_eye_iris_center_id, d.right_eye_left_id, d.right_eye_right_id, d.right_eye_top_id, d.right_eye_bottom_id, self.tracker)
+            lookdir = self.eye_enum(x, y)
 
-    def updateEyeData(self, landmarks):
-        x,y = d.eye_direction_from_landmarks(landmarks, d.right_eye_iris_center_id, d.right_eye_left_id, d.right_eye_right_id, d.right_eye_top_id, d.right_eye_bottom_id, self.tracker)
-        lookdir = self.eye_enum(x, y)
-        print(lookdir)
-        self.send_face_packet(str(self.faceId), lookdir)
+        if data[1] and len(data[1]) > 0:
+            blendshapes = data[1]
+
+        self.send_face_packet(str(self.faceId), lookdir, blendshapes)
 
 
     def eye_enum(self, x, y, deadzone=0.25):
@@ -177,14 +174,13 @@ class MainWindow(QMainWindow):
 
         return "center"
 
-    def send_face_packet(self, faceId, lookDir):
+    def send_face_packet(self, faceId, lookDir, blendshapes):
         packet = {
             "faceId": faceId,
             "lookDir": lookDir,
-            "blendshapes": {
-                "hi": 2
-            },
+            "blendshapes": blendshapes,
         }
+        # print(packet)
         self.sendUDPPacket.emit(packet)
 
 

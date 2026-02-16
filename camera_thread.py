@@ -10,13 +10,13 @@ from mediapipe.tasks.python.vision import (
     RunningMode,
 )
 import image_utils as imu
+import blendshapes as b
 
 
 
 class CameraThread(QThread):
     frame_ready = Signal(object)
-    face_data_ready = Signal(object)
-    iris_data_ready = Signal(object)
+    tracking_data_ready = Signal(object)
 
     def __init__(self, camera_index=0, parent=None):
         super().__init__(parent)
@@ -69,13 +69,18 @@ class CameraThread(QThread):
             )
 
             # self.frame_ready.emit(frame)
+            blendshapes = {"temp" : -1} # temporary cause if I remember correctly server currently drops packets with empty blendshape
             if result.face_blendshapes:
-                blendshapes = result.face_blendshapes[0]
-                self.face_data_ready.emit(blendshapes)
+                blendshapes = b.processBlendshapes(result.face_blendshapes[0])
 
+            landmarks = []
             if result.face_landmarks:
                 imu.draw_face_landmarks(rgb, result.face_landmarks)
-                self.iris_data_ready.emit(result.face_landmarks[0])
+                landmarks = result.face_landmarks[0]
+
+            if result.face_blendshapes or result.face_landmarks:
+                self.tracking_data_ready.emit((landmarks, blendshapes))
+
             frame = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
             self.frame_ready.emit(frame)
 
