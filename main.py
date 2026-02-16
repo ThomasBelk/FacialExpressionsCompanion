@@ -1,40 +1,66 @@
 import sys
 
 from PySide6.QtGui import QCloseEvent, QScreen
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, QSizePolicy
-from PySide6.QtCore import QSettings, Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, QSizePolicy, QLineEdit
+from PySide6.QtCore import QSettings, Qt, QThread, Signal
+from PySide6.QtGui import QPixmap, QIntValidator
 
 from camera_thread import CameraThread
-from eye_direction import AxisCalibrator
 from image_utils import cv_frame_to_qimage
 
 import eye_direction as d
 import socket
 import json
 
-SERVER_IP = "127.0.0.1"   # or server address
-SERVER_PORT = 25590
-FACE_ID = "fd32dab3-8276-4f96-8595-99c1199d1eae"
+from network import UDPSender
 
-def send_face_packet(sock, faceId, lookDir):
-    packet = {
-        "faceId": faceId,
-        "lookDir": lookDir,
-        "blendshapes": {
-            "hi": 2
-        },
-    }
-
-    data = json.dumps(packet).encode("utf-8")
-    sock.sendto(data, (SERVER_IP, SERVER_PORT))
+DEFAULT_IP = "localhost"
+DEFAULT_PORT = 25590
 
 class MainWindow(QMainWindow):
+    setUDPTarget = Signal(str, int)
+    sendUDPPacket = Signal(dict)
+
     def __init__(self):
         super().__init__()
         self.settings = QSettings("ThetaBork", "FacialExpressionsCompanion")
         self.containerWidget = QWidget()
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.senderThread = QThread()
+        self.sender = UDPSender()
+        self.sender.moveToThread(self.senderThread)
+
+        self.setUDPTarget.connect(self.sender.set_target)
+        self.sendUDPPacket.connect(self.sender.send_packet)
+
+        self.senderThread.start()
+
+
+
+        self.faceId = self.settings.value("FaceId", "")
+        self.serverIp = self.settings.value("ServerIp", DEFAULT_IP)
+        self.port = self.settings.value("Port", DEFAULT_PORT)
+
+        self.portValidator = QIntValidator(bottom= 1, top= 65535)
+
+        self.faceIdInput = QLineEdit()
+        self.serverIpInput = QLineEdit()
+        self.portInput = QLineEdit()
+        self.portInput.setValidator(self.portValidator)
+
+        self.faceIdInput.setPlaceholderText("Face Id")
+        self.faceIdInput.setText(str(self.faceId))
+        self.faceIdInput.textEdited.connect(self.updateFaceId)
+
+        self.serverIpInput.setPlaceholderText("Server IP")
+        self.serverIpInput.setText(str(self.serverIp))
+        self.serverIpInput.textEdited.connect(self.updateServerIp)
+
+        self.portInput.setPlaceholderText("Port")
+        self.portInput.setText(str(self.port))
+        self.portInput.textEdited.connect(self.updatePort)
+
+
+        self.setUDPTarget.emit(str(self.serverIp), int(self.port))
 
 
         self.video_label = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
@@ -49,9 +75,6 @@ class MainWindow(QMainWindow):
         self.camera.iris_data_ready.connect(self.updateEyeData)
         self.camera.start()
 
-        self.x_cal = AxisCalibrator(adapt_rate=0.05) # x_cal can move faster cause the default range is wider
-        self.y_cal = AxisCalibrator(adapt_rate=0.01) # want smaller changes. Will take slightly longer to calibrate
-
         self.tracker = d.EyeTracker(warmup_frames=300)
 
         self.initUI()
@@ -63,9 +86,14 @@ class MainWindow(QMainWindow):
 
         # Layout Stuff
         vbox = QVBoxLayout()
+        vbox.addWidget(self.faceIdInput)
+        vbox.addWidget(self.serverIpInput)
+        vbox.addWidget(self.portInput)
         vbox.addWidget(self.video_label)
         self.setCentralWidget(self.containerWidget)
         self.containerWidget.setLayout(vbox)
+
+        self.setFocus()
 
     def restoreWindowState(self):
         app = QApplication.instance()
@@ -124,7 +152,7 @@ class MainWindow(QMainWindow):
         x,y = d.eye_direction_from_landmarks(landmarks, d.right_eye_iris_center_id, d.right_eye_left_id, d.right_eye_right_id, d.right_eye_top_id, d.right_eye_bottom_id, self.tracker)
         lookdir = self.eye_enum(x, y)
         print(lookdir)
-        send_face_packet(self.sock, FACE_ID, lookdir)
+        self.send_face_packet(str(self.faceId), lookdir)
 
 
     def eye_enum(self, x, y, deadzone=0.25):
@@ -149,66 +177,15 @@ class MainWindow(QMainWindow):
 
         return "center"
 
-
-        # if abs(x) < deadzone and abs(y) < deadzone:
-        #     return "CENTER" + str(y)
-        #
-        # vertical = ""
-        # horizontal = ""
-        #
-        # if y < -deadzone:
-        #     vertical = "UP" +str(y)
-        # elif y > 0.1:
-        #     vertical = "DOWN" + str(y)
-        #
-        # if x < -deadzone:
-        #     horizontal = "RIGHT"
-        # elif x > deadzone:
-        #     horizontal = "LEFT"
-        #
-        # if vertical and horizontal:
-        #     return f"{vertical}_{horizontal}"
-        # elif vertical:
-        #     return vertical
-        # elif horizontal:
-        #     return horizontal
-        #
-        # return "CENTER"
-
-    def classify_gaze(self, x, y):
-        CENTER_DEADZONE = 0.25
-        DIAGONAL_RATIO = 0.6
-        if abs(x) < CENTER_DEADZONE and abs(y) < CENTER_DEADZONE:
-            return "center"
-
-        horiz = "left" if x < 0 else "right"
-        vert = "down" if y < 0 else "up"
-
-        # Diagonal if both components are strong
-        if abs(x) > DIAGONAL_RATIO and abs(y) > DIAGONAL_RATIO:
-            return vert + horiz
-
-        # Otherwise cardinal
-        if abs(x) > abs(y):
-            return horiz
-        else:
-            return vert
-
-    def gaze_from_blendshapes(self, blendshapes):
-        bs = {c.category_name: c.score for c in blendshapes}
-        x = (
-                    (bs.get("eyeLookOutLeft", 0) - bs.get("eyeLookInLeft", 0)) +
-                    (bs.get("eyeLookOutRight", 0) - bs.get("eyeLookInRight", 0))
-            ) * 0.5
-
-        print("X = " + str(x))
-
-        y = (
-                    (bs.get("eyeLookUpLeft", 0) - bs.get("eyeLookDownLeft", 0)) +
-                    (bs.get("eyeLookUpRight", 0) - bs.get("eyeLookDownRight", 0))
-            ) * 0.5
-
-        return self.classify_gaze(x, y)
+    def send_face_packet(self, faceId, lookDir):
+        packet = {
+            "faceId": faceId,
+            "lookDir": lookDir,
+            "blendshapes": {
+                "hi": 2
+            },
+        }
+        self.sendUDPPacket.emit(packet)
 
 
     def closeEvent(self, event: QCloseEvent):
@@ -217,8 +194,25 @@ class MainWindow(QMainWindow):
         self.settings.setValue("WindowSize", self.size())
         self.settings.setValue("ScreenName", self.screen().name())
         self.settings.setValue("WindowPosition", self.pos())
+        self.settings.setValue("ServerIp", str(self.serverIpInput.text()))
+        self.settings.setValue("Port", str(self.portInput.text()))
         self.settings.sync()
         event.accept()
+
+    def updatePort(self, text):
+        if text:
+            self.port = int(text)
+            self.setUDPTarget.emit(str(self.serverIp), int(self.port))
+
+
+    def updateServerIp(self, text):
+        if text:
+            self.serverIp = text
+            self.setUDPTarget.emit(str(self.serverIp), int(self.port))
+
+    def updateFaceId(self, text):
+        if text:
+            self.faceId = str(text)
 
 
 def main():

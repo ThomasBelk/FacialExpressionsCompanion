@@ -44,36 +44,10 @@ def eye_direction_from_landmarks(landmarks, iris_center_id, left_id, right_id, t
     x = 2 * x_cal - 1
     y = 2 * y_cal - 1
 
-
-
     return x, y
-
-    x_norm = (iris_x - (left_x + right_x) / 2) / ((right_x - left_x) / 2)
-    y_norm = (iris_y - (top_y + bottom_y) / 2) / ((bottom_y - top_y) / 2)
-
-    return x_norm, y_norm
-
-def eye_open(landmarks, top_id, bottom_id):
-    return abs(landmarks[top_id].y - landmarks[bottom_id].y)
 
 def clamp01(value):
     return max(0.0, min(1.0, value))
-
-
-class AxisCalibrator:
-    def __init__(self, adapt_rate=0.02):
-        self.min = 1.0
-        self.max = 0.0
-        self.rate = adapt_rate
-
-    def update(self, v):
-        self.min += self.rate * (v - self.min) if v < self.min else 0
-        self.max += self.rate * (v - self.max) if v > self.max else 0
-
-    def remap(self, v):
-        if self.max - self.min < 1e-4:
-            return 0.5
-        return (v - self.min) / (self.max - self.min)
 
 
 class EyeTracker:
@@ -156,9 +130,3 @@ class EyeTracker:
         y_final = self.clamp01(self.y_smooth)
 
         return x_final, y_final
-
-    def as_game_coords(self):
-        """
-        Convert 0..1 -> -1..1 for game use
-        """
-        return 2 * self.x_smooth - 1, 2 * self.y_smooth - 1

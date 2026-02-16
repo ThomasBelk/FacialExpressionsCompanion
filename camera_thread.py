@@ -8,44 +8,9 @@ from mediapipe.tasks.python.vision import (
     FaceLandmarker,
     FaceLandmarkerOptions,
     RunningMode,
-    drawing_utils,
-    drawing_styles,
-    FaceLandmarksConnections
 )
-import socket
-import json
-import time
-import eye_direction
+import image_utils as imu
 
-lips_style = drawing_utils.DrawingSpec(
-            color=(255, 0, 0),
-            thickness=1
-        )
-
-left_eyebrow_style = drawing_utils.DrawingSpec(
-    color=(0, 255, 255),
-    thickness=1
-)
-
-right_eyebrow_style = drawing_utils.DrawingSpec(
-    color=(255, 255, 0),
-    thickness=1
-)
-
-left_iris_style = drawing_utils.DrawingSpec(
-    color=(0, 0, 255),
-    thickness=1
-)
-
-right_iris_style = drawing_utils.DrawingSpec(
-    color=(0, 255, 0),
-    thickness=1
-)
-
-face_outline_style = drawing_utils.DrawingSpec(
-    color=(128, 0, 128),
-    thickness=1
-)
 
 
 class CameraThread(QThread):
@@ -58,22 +23,18 @@ class CameraThread(QThread):
         self.camera_index = camera_index
         self.running = True
         self.timestamp_ms = 0
-        self.udp_ip = "127.0.0.1"
-        self.udp_port = 25590
+        self.cap = None
 
-        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-        # 30 Hz rate limiting
-        self.send_hz = 30
-        self.send_interval = 1.0 / self.send_hz
-        self.last_send_time = 0.0
-        self.start_time = time.perf_counter()
-      #  self.face_mesh = FaceMeshProcessor()
+    def switch_camera(self, new_index: int):
+        if self.cap is not None and self.cap.isOpened():
+            self.cap.release()
+        self.camera_index = new_index
+        self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
 
     def run(self):
-        cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+        self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
 
-        if not cap.isOpened():
+        if not self.cap.isOpened():
             print("❌ Failed to open camera")
             return
 
@@ -89,7 +50,7 @@ class CameraThread(QThread):
         landmarker = FaceLandmarker.create_from_options(options)
 
         while self.running:
-            ret, frame = cap.read()
+            ret, frame = self.cap.read()
             if not ret:
                 continue
 
@@ -112,118 +73,16 @@ class CameraThread(QThread):
                 blendshapes = result.face_blendshapes[0]
                 self.face_data_ready.emit(blendshapes)
 
-                now = time.perf_counter()
-
-                if now - self.last_send_time >= self.send_interval:
-                    self.last_send_time = now
-
-                    packet = {
-                        "timestamp": int((now - self.start_time) * 1000),
-                        "faces": self.build_face_packet(blendshapes)
-                    }
-
-                    try:
-                        self.sock.sendto(
-                            json.dumps(packet).encode("utf-8"),
-                            (self.udp_ip, self.udp_port)
-                        )
-                    except Exception as e:
-                        # non-fatal: just log once if you want
-                        print(f"UDP send error: {e}")
-
             if result.face_landmarks:
-                for face_landmarks in result.face_landmarks:
-                    drawing_utils.draw_landmarks(
-                        image=rgb,
-                        landmark_list=face_landmarks,
-                        connections=FaceLandmarksConnections.FACE_LANDMARKS_TESSELATION,
-                        landmark_drawing_spec=None,
-                        connection_drawing_spec=drawing_styles.get_default_face_mesh_tesselation_style()
-                    )
-                    drawing_utils.draw_landmarks(
-                        image=rgb,
-                        landmark_list=face_landmarks,
-                        connections=FaceLandmarksConnections.FACE_LANDMARKS_LIPS,
-                        landmark_drawing_spec=None,
-                        connection_drawing_spec=lips_style
-                    )
-                    drawing_utils.draw_landmarks(
-                        image=rgb,
-                        landmark_list=face_landmarks,
-                        connections=FaceLandmarksConnections.FACE_LANDMARKS_LEFT_EYEBROW,
-                        landmark_drawing_spec=None,
-                        connection_drawing_spec=left_eyebrow_style
-                    )
-                    drawing_utils.draw_landmarks(
-                        image=rgb,
-                        landmark_list=face_landmarks,
-                        connections=FaceLandmarksConnections.FACE_LANDMARKS_RIGHT_EYEBROW,
-                        landmark_drawing_spec=None,
-                        connection_drawing_spec=right_eyebrow_style
-                    )
-                    drawing_utils.draw_landmarks(
-                        image=rgb,
-                        landmark_list=face_landmarks,
-                        connections=FaceLandmarksConnections.FACE_LANDMARKS_LEFT_IRIS,
-                        landmark_drawing_spec=None,
-                        connection_drawing_spec=left_iris_style
-                    )
-                    drawing_utils.draw_landmarks(
-                        image=rgb,
-                        landmark_list=face_landmarks,
-                        connections=FaceLandmarksConnections.FACE_LANDMARKS_RIGHT_IRIS,
-                        landmark_drawing_spec=None,
-                        connection_drawing_spec=right_iris_style
-                    )
-                    drawing_utils.draw_landmarks(
-                        image=rgb,
-                        landmark_list=face_landmarks,
-                        connections=FaceLandmarksConnections.FACE_LANDMARKS_FACE_OVAL,
-                        landmark_drawing_spec=None,
-                        connection_drawing_spec=face_outline_style
-                    )
-
-                lm = result.face_landmarks[0][468]
-                x = lm.x
-                y = lm.y
-                self.draw_point(rgb, x, y )
-
+                imu.draw_face_landmarks(rgb, result.face_landmarks)
                 self.iris_data_ready.emit(result.face_landmarks[0])
             frame = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
             self.frame_ready.emit(frame)
 
-        cap.release()
-
-    # def iris_center(self, face_landmarks, indices):
-    #     x = sum(face_landmarks[i].x for i in indices) / len(indices)
-    #     y = sum(face_landmarks[i].y for i in indices) / len(indices)
-    #     z = sum(face_landmarks[i].z for i in indices) / len(indices)
-    #     return x, y, z
-
-    def draw_point(self, frame, x_norm, y_norm, color=(0, 0, 255), radius=3):
-        h, w, _ = frame.shape
-        x_px = int(x_norm * w)
-        y_px = int(y_norm * h)
-        cv2.circle(frame, (x_px, y_px), radius, color, -1)
-
-    def draw_face_landmarks(self, frame, landmarks):
-        h, w, _ = frame.shape
-
-        for lm in landmarks:
-            x = int(lm.x * w)
-            y = int(lm.y * h)
-            cv2.circle(frame, (x, y), 1, (0, 255, 0), -1)
-
-    def build_face_packet(self, blendshapes):
-        return {
-            c.category_name: float(c.score)
-            for c in blendshapes
-        }
+        self.cap.release()
 
     def stop(self):
         self.running = False
-        try:
-            self.sock.close()
-        except Exception:
-            pass
+        if self.cap is not None and self.cap.isOpened():
+            self.cap.release()
         self.wait()
