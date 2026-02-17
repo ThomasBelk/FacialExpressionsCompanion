@@ -1,7 +1,7 @@
 
 DESIRED_BLENDSHAPES = [
     "browInnerUp", "browDownLeft", "browDownRight", "browOuterUpLeft", "browOuterUpRight",
-    "jawOpen", "mouthLeft", "mouthRight", "mouthFrownLeft", "mouthFrownRight",
+    "jawOpen", "mouthSmileLeft", "mouthSmileRight", "mouthFrownLeft", "mouthFrownRight",
     "eyeBlinkLeft", "eyeBlinkRight"
 ]
 
