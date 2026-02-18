@@ -1,6 +1,6 @@
 import sys
 
-from PySide6.QtGui import QCloseEvent, QScreen
+from PySide6.QtGui import QCloseEvent, QScreen, QIcon
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, QSizePolicy, QLineEdit
 from PySide6.QtCore import QSettings, Qt, QThread, Signal
 from PySide6.QtGui import QPixmap, QIntValidator
@@ -81,6 +81,7 @@ class MainWindow(QMainWindow):
 
     def initUI(self):
         self.setWindowTitle("Facial Expressions Companion")
+        self.setWindowIcon(QIcon("icons/rtfelogo.png"))
         self.restoreWindowState()
 
         # Layout Stuff
@@ -190,6 +191,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("WindowSize", self.size())
         self.settings.setValue("ScreenName", self.screen().name())
         self.settings.setValue("WindowPosition", self.pos())
+        self.settings.setValue("FaceId", str(self.faceId))
         self.settings.setValue("ServerIp", str(self.serverIpInput.text()))
         self.settings.setValue("Port", str(self.portInput.text()))
         self.settings.sync()
