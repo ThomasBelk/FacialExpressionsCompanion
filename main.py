@@ -9,8 +9,7 @@ from camera_thread import CameraThread
 from image_utils import cv_frame_to_qimage
 
 import eye_direction as d
-import socket
-import json
+import file_utils as fu
 
 from network import UDPSender
 
@@ -81,7 +80,8 @@ class MainWindow(QMainWindow):
 
     def initUI(self):
         self.setWindowTitle("Facial Expressions Companion")
-        self.setWindowIcon(QIcon("icons/rtfelogo.png"))
+        icon_path = fu.resource_path("icons/rtfelogo.png")
+        self.setWindowIcon(QIcon(str(icon_path)))
         self.restoreWindowState()
 
         # Layout Stuff

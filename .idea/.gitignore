@@ -8,3 +8,9 @@
 /dataSources.local.xml
 # Editor-based HTTP Client requests
 /httpRequests/
+# project stuff
+/dist/
+/build/
+/.idea/
+/.venv/
+/models/

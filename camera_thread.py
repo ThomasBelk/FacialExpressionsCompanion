@@ -11,6 +11,7 @@ from mediapipe.tasks.python.vision import (
 )
 import image_utils as imu
 import blendshapes as b
+import file_utils as fu
 
 
 
@@ -38,9 +39,10 @@ class CameraThread(QThread):
             print("❌ Failed to open camera")
             return
 
+        task_path = fu.resource_path("models/face_landmarker.task")
         options = FaceLandmarkerOptions(
             base_options=BaseOptions(
-                model_asset_path="models/face_landmarker.task"
+                model_asset_path=str(task_path)
             ),
             running_mode=RunningMode.VIDEO,
             output_face_blendshapes=True,
