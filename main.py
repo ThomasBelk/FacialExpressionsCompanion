@@ -1,7 +1,8 @@
 import sys
 
 from PySide6.QtGui import QCloseEvent, QScreen, QIcon
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, QSizePolicy, QLineEdit
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, QSizePolicy, QLineEdit, \
+    QFormLayout, QHBoxLayout
 from PySide6.QtCore import QSettings, Qt, QThread, Signal
 from PySide6.QtGui import QPixmap, QIntValidator
 
@@ -12,6 +13,7 @@ import eye_direction as d
 import file_utils as fu
 
 from network import UDPSender
+from ui import FormField, ToggleButton
 
 DEFAULT_IP = "localhost"
 DEFAULT_PORT = 25590
@@ -19,6 +21,7 @@ DEFAULT_PORT = 25590
 class MainWindow(QMainWindow):
     setUDPTarget = Signal(str, int)
     sendUDPPacket = Signal(dict)
+    setShowMesh = Signal(bool)
 
     def __init__(self):
         super().__init__()
@@ -33,6 +36,8 @@ class MainWindow(QMainWindow):
 
         self.senderThread.start()
 
+        self.show_video = False
+        self.show_mesh = True
 
 
         self.faceId = self.settings.value("FaceId", "")
@@ -41,22 +46,19 @@ class MainWindow(QMainWindow):
 
         self.portValidator = QIntValidator(bottom= 1, top= 65535)
 
-        self.faceIdInput = QLineEdit()
-        self.serverIpInput = QLineEdit()
-        self.portInput = QLineEdit()
+        self.faceIdInput = FormField("Face Id", "Face Id")
+        self.serverIpInput = FormField("Server IP", "Server IP")
+        self.portInput = FormField("Port", "Port")
         self.portInput.setValidator(self.portValidator)
 
-        self.faceIdInput.setPlaceholderText("Face Id")
         self.faceIdInput.setText(str(self.faceId))
-        self.faceIdInput.textEdited.connect(self.updateFaceId)
+        self.faceIdInput.connectEditEvent(self.updateFaceId)
 
-        self.serverIpInput.setPlaceholderText("Server IP")
         self.serverIpInput.setText(str(self.serverIp))
-        self.serverIpInput.textEdited.connect(self.updateServerIp)
+        self.serverIpInput.connectEditEvent(self.updateServerIp)
 
-        self.portInput.setPlaceholderText("Port")
         self.portInput.setText(str(self.port))
-        self.portInput.textEdited.connect(self.updatePort)
+        self.portInput.connectEditEvent(self.updatePort)
 
 
         self.setUDPTarget.emit(str(self.serverIp), int(self.port))
@@ -71,6 +73,7 @@ class MainWindow(QMainWindow):
         self.camera = CameraThread(0)
         self.camera.frame_ready.connect(self.updateFrame)
         self.camera.tracking_data_ready.connect(self.handleTrackingData)
+        self.setShowMesh.connect(self.camera.setShowMesh)
         self.camera.start()
 
         self.tracker = d.EyeTracker(warmup_frames=300)
@@ -85,11 +88,32 @@ class MainWindow(QMainWindow):
         self.restoreWindowState()
 
         # Layout Stuff
+        form = QFormLayout()
+        form.addRow(self.faceIdInput)
+        form.addRow(self.serverIpInput)
+        form.addRow(self.portInput)
+        form.setSpacing(8)
+
+        formConatiner = QWidget()
+        formConatiner.setLayout(form)
+
+        showCameraButton = ToggleButton("Show Camera", "Hide Camera", self.show_video,120,110)
+        showCameraButton.toggledState.connect(self.setVideo)
+        showFaceMeshButton = ToggleButton("Show Face Mesh", "Hide Face Mesh", self.show_mesh, 120, 110)
+        showFaceMeshButton.toggledState.connect(self.updateShowMesh)
+
+        hbox = QHBoxLayout()
+        hbox.addWidget(showCameraButton)
+        hbox.addWidget(showFaceMeshButton)
+        hbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hboxWidget = QWidget()
+        hboxWidget.setLayout(hbox)
+
         vbox = QVBoxLayout()
-        vbox.addWidget(self.faceIdInput)
-        vbox.addWidget(self.serverIpInput)
-        vbox.addWidget(self.portInput)
-        vbox.addWidget(self.video_label)
+        vbox.setSpacing(0)
+        vbox.addWidget(formConatiner)
+        vbox.addWidget(hboxWidget, 0)
+        vbox.addWidget(self.video_label, 1)
         self.setCentralWidget(self.containerWidget)
         self.containerWidget.setLayout(vbox)
 
@@ -130,6 +154,8 @@ class MainWindow(QMainWindow):
 
 
     def updateFrame(self, frame):
+        if not self.show_video:
+            return
         image = cv_frame_to_qimage(frame)
         pixmap = QPixmap.fromImage(image)
         self.video_label.setPixmap(
@@ -192,8 +218,8 @@ class MainWindow(QMainWindow):
         self.settings.setValue("ScreenName", self.screen().name())
         self.settings.setValue("WindowPosition", self.pos())
         self.settings.setValue("FaceId", str(self.faceId))
-        self.settings.setValue("ServerIp", str(self.serverIpInput.text()))
-        self.settings.setValue("Port", str(self.portInput.text()))
+        self.settings.setValue("ServerIp", str(self.serverIp))
+        self.settings.setValue("Port", str(self.port))
         self.settings.sync()
         event.accept()
 
@@ -211,6 +237,15 @@ class MainWindow(QMainWindow):
     def updateFaceId(self, text):
         if text:
             self.faceId = str(text)
+
+    def setVideo(self, checked: bool):
+        self.show_video = checked
+        if not self.show_video:
+            self.video_label.clear()
+
+    def updateShowMesh(self, checked: bool):
+        self.show_mesh = checked
+        self.setShowMesh.emit(checked)
 
 
 def main():

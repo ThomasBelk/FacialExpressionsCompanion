@@ -1,6 +1,6 @@
 # camera_thread.py
 import cv2
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import QThread, Signal, Slot
 import numpy as np
 import mediapipe as mp
 from mediapipe.tasks.python import BaseOptions
@@ -22,6 +22,7 @@ class CameraThread(QThread):
     def __init__(self, camera_index=0, parent=None):
         super().__init__(parent)
         self.camera_index = camera_index
+        self.show_mesh = True
         self.running = True
         self.timestamp_ms = 0
         self.cap = None
@@ -31,6 +32,10 @@ class CameraThread(QThread):
             self.cap.release()
         self.camera_index = new_index
         self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+
+    @Slot(bool)
+    def setShowMesh(self, show_mesh: bool):
+        self.show_mesh = show_mesh
 
     def run(self):
         self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
@@ -77,7 +82,8 @@ class CameraThread(QThread):
 
             landmarks = []
             if result.face_landmarks:
-                imu.draw_face_landmarks(rgb, result.face_landmarks)
+                if self.show_mesh:
+                    imu.draw_face_landmarks(rgb, result.face_landmarks)
                 landmarks = result.face_landmarks[0]
 
             if result.face_blendshapes or result.face_landmarks:
