@@ -13,7 +13,7 @@ import eye_direction as d
 import file_utils as fu
 
 from network import UDPSender
-from ui import FormField, ToggleButton
+from ui import FormField, ToggleButton, CameraSelector
 
 DEFAULT_IP = "localhost"
 DEFAULT_PORT = 25590
@@ -22,6 +22,7 @@ class MainWindow(QMainWindow):
     setUDPTarget = Signal(str, int)
     sendUDPPacket = Signal(dict)
     setShowMesh = Signal(bool)
+    setCamera = Signal(int)
 
     def __init__(self):
         super().__init__()
@@ -43,6 +44,7 @@ class MainWindow(QMainWindow):
         self.faceId = self.settings.value("FaceId", "")
         self.serverIp = self.settings.value("ServerIp", DEFAULT_IP)
         self.port = self.settings.value("Port", DEFAULT_PORT)
+        self.selectedCameraName = self.settings.value("Camera", None)
 
         self.portValidator = QIntValidator(bottom= 1, top= 65535)
 
@@ -63,6 +65,7 @@ class MainWindow(QMainWindow):
 
         self.setUDPTarget.emit(str(self.serverIp), int(self.port))
 
+        self.cameraSelector = CameraSelector()
 
         self.video_label = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
         self.video_label.setSizePolicy(
@@ -70,10 +73,15 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Ignored
         )
         self.video_label.setMinimumSize(1, 1)
-        self.camera = CameraThread(0)
+        initialCameraIndex = self.cameraSelector.findIndexFromName(self.selectedCameraName)
+
+        self.cameraSelector.setCurrentIndex(initialCameraIndex)
+        self.camera = CameraThread(initialCameraIndex)
         self.camera.frame_ready.connect(self.updateFrame)
         self.camera.tracking_data_ready.connect(self.handleTrackingData)
         self.setShowMesh.connect(self.camera.setShowMesh)
+        self.setCamera.connect(self.camera.switch_camera)
+        self.cameraSelector.cameraChanged.connect(self.updateCamera)
         self.camera.start()
 
         self.tracker = d.EyeTracker(warmup_frames=300)
@@ -103,6 +111,7 @@ class MainWindow(QMainWindow):
         showFaceMeshButton.toggledState.connect(self.updateShowMesh)
 
         hbox = QHBoxLayout()
+        hbox.addWidget(self.cameraSelector)
         hbox.addWidget(showCameraButton)
         hbox.addWidget(showFaceMeshButton)
         hbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -220,6 +229,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("FaceId", str(self.faceId))
         self.settings.setValue("ServerIp", str(self.serverIp))
         self.settings.setValue("Port", str(self.port))
+        self.settings.setValue("Camera", self.selectedCameraName)
         self.settings.sync()
         event.accept()
 
@@ -246,6 +256,10 @@ class MainWindow(QMainWindow):
     def updateShowMesh(self, checked: bool):
         self.show_mesh = checked
         self.setShowMesh.emit(checked)
+
+    def updateCamera(self, checked: int, s):
+        self.setCamera.emit(checked)
+        self.selectedCameraName = s
 
 
 def main():

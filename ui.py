@@ -1,8 +1,9 @@
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QLineEdit, QPushButton,
-    QHBoxLayout, QVBoxLayout, QLabel, QFormLayout, QTextEdit, QSizePolicy
+    QWidget, QLineEdit, QPushButton,
+    QHBoxLayout, QLabel, QSizePolicy, QComboBox
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
+from pygrabber.dshow_graph import FilterGraph
 
 
 class FormField(QWidget):
@@ -73,3 +74,48 @@ class ToggleButton(QPushButton):
         else:
             self.setText(self.text_on)
         self.toggledState.emit(self.isChecked())
+
+
+class CameraSelector(QComboBox):
+    cameraChanged = Signal(int, str)  # index, name
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self.devices = self.findCameras()
+        self.populateCameras()
+
+        self.currentIndexChanged.connect(self._onIndexChanged)
+
+    def findCameras(self):
+        graph = FilterGraph()
+        return graph.get_input_devices()  # List[str]
+
+    def populateCameras(self):
+        self.clear()
+
+        for index, device in enumerate(self.devices):
+            self.addItem(device, index)
+
+    def currentCameraIndex(self) -> int:
+        return self.currentData()
+
+    def currentCameraName(self) -> str:
+        return self.currentText()
+
+    def findIndexFromName(self, name) -> int:
+        if name is None:
+            return 0
+        for index, device in enumerate(self.devices):
+            if device == name:
+                return index
+        return 0 # the default it to try what would be the first camera
+
+    def setCameraIndex(self, index):
+        self.setCurrentIndex(index)
+
+    def _onIndexChanged(self, index):
+        self.cameraChanged.emit(
+            self.currentCameraIndex(),
+            self.currentCameraName()
+        )

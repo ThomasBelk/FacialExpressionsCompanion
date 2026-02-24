@@ -1,7 +1,6 @@
 # camera_thread.py
 import cv2
 from PySide6.QtCore import QThread, Signal, Slot
-import numpy as np
 import mediapipe as mp
 from mediapipe.tasks.python import BaseOptions
 from mediapipe.tasks.python.vision import (
@@ -27,6 +26,7 @@ class CameraThread(QThread):
         self.timestamp_ms = 0
         self.cap = None
 
+    @Slot(int)
     def switch_camera(self, new_index: int):
         if self.cap is not None and self.cap.isOpened():
             self.cap.release()
@@ -41,7 +41,7 @@ class CameraThread(QThread):
         self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
 
         if not self.cap.isOpened():
-            print("❌ Failed to open camera")
+            print("❌ Failed to open camera " + str(self.camera_index))
             return
 
         task_path = fu.resource_path("models/face_landmarker.task")
