@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('icons', 'icons'), ('models', 'models')]
+datas = [('icons', 'icons'), ('models', 'models'), ('THIRD-PARTY-LICENSES.md', '.'), ('LICENSE.md', '.'), ('PERMISSIONS.md', '.')]
 binaries = []
 hiddenimports = ['mediapipe.tasks.c', 'mediapipe.tasks.python', 'mediapipe.tasks.python.vision']
 tmp_ret = collect_all('mediapipe')
