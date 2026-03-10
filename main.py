@@ -6,6 +6,7 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, Q
 from PySide6.QtCore import QSettings, Qt, QThread, Signal
 from PySide6.QtGui import QPixmap, QIntValidator
 
+import update_checker
 from camera_thread import CameraThread
 from image_utils import cv_frame_to_qimage
 
@@ -14,6 +15,7 @@ import file_utils as fu
 
 from network import UDPSender
 from ui import FormField, ToggleButton, CameraSelector
+from update_checker import check_for_updates, install_update_if_ready
 
 DEFAULT_IP = "localhost"
 DEFAULT_PORT = 25590
@@ -90,7 +92,10 @@ class MainWindow(QMainWindow):
 
 
     def initUI(self):
-        self.setWindowTitle("Facial Expressions Companion")
+        window_title = ("Facial Expressions Companion - "
+                        + "Pre-Release Version " if update_checker.INCLUDE_PRE_RELEASE else "Version "
+                                                                                            + str(update_checker.CURRENT_VERSION))
+        self.setWindowTitle(window_title)
         icon_path = fu.resource_path("icons/rtfelogo.png")
         self.setWindowIcon(QIcon(str(icon_path)))
         self.restoreWindowState()
@@ -263,11 +268,16 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    check_for_updates()
+
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
-    sys.exit(app.exec())
+    exit_code = app.exec()
 
+    install_update_if_ready()
+
+    sys.exit(exit_code)
 
 
 if __name__ == '__main__':
