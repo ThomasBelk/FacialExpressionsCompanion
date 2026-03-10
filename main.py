@@ -93,8 +93,8 @@ class MainWindow(QMainWindow):
 
     def initUI(self):
         window_title = ("Facial Expressions Companion - "
-                        + "Pre-Release Version " if update_checker.INCLUDE_PRE_RELEASE else "Version "
-                                                                                            + str(update_checker.CURRENT_VERSION))
+                        + ("Pre-Release Version " if update_checker.INCLUDE_PRE_RELEASE else "Version ")
+                        + str(update_checker.CURRENT_VERSION))
         self.setWindowTitle(window_title)
         icon_path = fu.resource_path("icons/rtfelogo.png")
         self.setWindowIcon(QIcon(str(icon_path)))
