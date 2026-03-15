@@ -1,20 +1,30 @@
+import sys
 import requests
-import threading
-import subprocess
 import tempfile
 import os
+from PySide6.QtGui import QIcon, Qt
+from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout, QHBoxLayout
 from packaging.version import Version
+import file_utils as fu
 
 OWNER = "ThomasBelk"
 REPO = "FacialExpressionsCompanion"
 
-CURRENT_VERSION = Version("0.1.2")
+CURRENT_VERSION = Version("0.1.1")
 
 UPDATE_FILE = os.path.join(tempfile.gettempdir(), "real_facial_expressions_update.exe")
 
 update_downloaded = False
 
-INCLUDE_PRE_RELEASE = True  # toggle this to allow/disallow prereleases
+INCLUDE_PRE_RELEASE = False
+
+def cleanup_temp_update():
+    if os.path.exists(UPDATE_FILE):
+        try:
+            os.remove(UPDATE_FILE)
+            print(f"Removed temp update file: {UPDATE_FILE}")
+        except Exception as e:
+            print(f"Failed to remove temp update file: {e}")
 
 def get_update_info():
     try:
@@ -24,16 +34,15 @@ def get_update_info():
         releases = r.json()
 
         for release in releases:
-            # Skip prereleases if include_pre_release is False
             if release["prerelease"] and not INCLUDE_PRE_RELEASE:
                 continue
 
             latest_version = Version(release["tag_name"].lstrip("v"))
 
             if latest_version <= CURRENT_VERSION:
-                continue  # Not newer
+                continue
 
-            # Find the .exe asset
+            # find .exe asset
             for asset in release["assets"]:
                 if asset["name"].endswith(".exe"):
                     return asset["browser_download_url"]
@@ -45,39 +54,40 @@ def get_update_info():
         print("Update check failed:", e)
         return None
 
+class UpdateDialog(QDialog):
+    def __init__(self, url:str):
+        super().__init__()
+        self.url = url
 
-def download_update(url):
-    global update_downloaded
+        self.setWindowTitle("New Update")
+        self.setFixedSize(300, 120)
+        icon_path = fu.resource_path("icons/rtfelogo.png")
+        self.setWindowIcon(QIcon(str(icon_path)))
 
-    try:
-        r = requests.get(url, stream=True)
+        label = QLabel("A new update is available for the Real Facial Expressions Companion App.")
+        label.setWordWrap(True)
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        update_button = QPushButton("Update")
+        remind_button = QPushButton("Remind Me Later")
+        update_button.clicked.connect(self.handleUpdateButton)
+        remind_button.clicked.connect(self.handleRemindMeButton)
 
-        with open(UPDATE_FILE, "wb") as f:
-            for chunk in r.iter_content(8192):
-                f.write(chunk)
+        layout = QVBoxLayout()
+        horizontal_layout = QHBoxLayout()
+        layout.addWidget(label)
+        horizontal_layout.addWidget(update_button)
+        horizontal_layout.addWidget(remind_button)
+        layout.addLayout(horizontal_layout)
 
-        update_downloaded = True
-        print("Update downloaded.")
+        self.setLayout(layout)
 
-    except Exception as e:
-        print("Download failed:", e)
+    def handleRemindMeButton(self):
+        self.accept()
 
-
-def start_update_download(url):
-    thread = threading.Thread(target=download_update, args=(url,))
-    thread.daemon = True
-    thread.start()
-
-
-def check_for_updates():
-    url = get_update_info()
-
-    if url:
-        print("New version found. Downloading in background...")
-        start_update_download(url)
-
-
-def install_update_if_ready():
-    if os.path.exists(UPDATE_FILE):
-        print("Launching installer...")
-        subprocess.Popen([UPDATE_FILE, "/VERYSILENT", "/NORESTART"])
+    def handleUpdateButton(self):
+        try:
+            fu.run_temp_updater(self.url)
+            sys.exit(0)
+        except Exception as e:
+            print(e)
+            self.close()

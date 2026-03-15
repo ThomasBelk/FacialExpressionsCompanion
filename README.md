@@ -24,3 +24,17 @@ The project is currently licensed as All Rights Reserved. I plan to revisit this
 4) Enter the server IP and the port into the companion app. The default port is **25590**.
     - Note: your faceId should not change so you will only have to do this once.
 5) Once you tab back into the game, your expressions should be mirrored on your character.
+
+## Building From Python Code
+This is mostly for me lol.
+### Building Installer:
+Installer likely will not change unless there is a bug, but here is how to do it.
+- In venv run `pyinstaller --noconfirm RealFacialExpressionsUpdater.spec`
+
+### Building App
+- First change version name in update_checker.
+- Make sure `INCLUDE_PRE_RELEASE = False`
+- In venv run `pyinstaller --noconfirm RealFacialExpressions.spec`
+  -  If you have a new folder that needs to be included change the spec
+- Change version number in Inno Setup
+- Compile and Deploy

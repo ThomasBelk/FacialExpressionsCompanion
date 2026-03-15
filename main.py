@@ -1,3 +1,4 @@
+import ctypes
 import sys
 
 from PySide6.QtGui import QCloseEvent, QScreen, QIcon
@@ -15,10 +16,11 @@ import file_utils as fu
 
 from network import UDPSender
 from ui import FormField, ToggleButton, CameraSelector
-from update_checker import check_for_updates, install_update_if_ready
+from update_checker import cleanup_temp_update, get_update_info
 
 DEFAULT_IP = "localhost"
 DEFAULT_PORT = 25590
+MUTEX_NAME = "Global\\RealFacialExpressions"
 
 class MainWindow(QMainWindow):
     setUDPTarget = Signal(str, int)
@@ -268,14 +270,22 @@ class MainWindow(QMainWindow):
 
 
 def main():
-    check_for_updates()
+    mutex = ctypes.windll.kernel32.CreateMutexW(None, False, MUTEX_NAME)
+    ERROR_ALREADY_EXISTS = 183
+    if ctypes.windll.kernel32.GetLastError() == ERROR_ALREADY_EXISTS:
+        print("App already running")
+        sys.exit(0)
 
+    cleanup_temp_update()
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
-    exit_code = app.exec()
 
-    install_update_if_ready()
+    url = get_update_info()
+    if url:
+        dialog = update_checker.UpdateDialog(url)
+        dialog.exec()
+    exit_code = app.exec()
 
     sys.exit(exit_code)
 
