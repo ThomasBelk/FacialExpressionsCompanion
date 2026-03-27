@@ -11,6 +11,7 @@ from mediapipe.tasks.python.vision import (
 import image_utils as imu
 import blendshapes as b
 import file_utils as fu
+import time
 
 
 
@@ -23,7 +24,7 @@ class CameraThread(QThread):
         self.camera_index = camera_index
         self.show_mesh = True
         self.running = True
-        self.timestamp_ms = 0
+        self.start_time = time.time()
         self.cap = None
 
     @Slot(int)
@@ -61,7 +62,7 @@ class CameraThread(QThread):
             if not ret:
                 continue
 
-            self.timestamp_ms += 33
+            timestamp_ms = int((time.time() - self.start_time) * 1000)
 
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
@@ -72,7 +73,7 @@ class CameraThread(QThread):
 
             result = landmarker.detect_for_video(
                 mp_image,
-                self.timestamp_ms
+                timestamp_ms
             )
 
             # self.frame_ready.emit(frame)

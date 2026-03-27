@@ -10,7 +10,7 @@ import file_utils as fu
 OWNER = "ThomasBelk"
 REPO = "FacialExpressionsCompanion"
 
-CURRENT_VERSION = Version("0.1.1")
+CURRENT_VERSION = Version("0.1.2")
 
 UPDATE_FILE = os.path.join(tempfile.gettempdir(), "real_facial_expressions_update.exe")
 
