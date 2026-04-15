@@ -55,43 +55,42 @@ class CameraThread(QThread):
             num_faces=1
         )
 
-        landmarker = FaceLandmarker.create_from_options(options)
+        with FaceLandmarker.create_from_options(options) as landmarker:
+            while self.running:
+                ret, frame = self.cap.read()
+                if not ret:
+                    continue
 
-        while self.running:
-            ret, frame = self.cap.read()
-            if not ret:
-                continue
+                timestamp_ms = int((time.time() - self.start_time) * 1000)
 
-            timestamp_ms = int((time.time() - self.start_time) * 1000)
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(
+                    image_format=mp.ImageFormat.SRGB,
+                    data=rgb
+                )
 
-            mp_image = mp.Image(
-                image_format=mp.ImageFormat.SRGB,
-                data=rgb
-            )
+                result = landmarker.detect_for_video(
+                    mp_image,
+                    timestamp_ms
+                )
 
-            result = landmarker.detect_for_video(
-                mp_image,
-                timestamp_ms
-            )
+                # self.frame_ready.emit(frame)
+                blendshapes = {"temp" : -1} # temporary cause if I remember correctly server currently drops packets with empty blendshape
+                if result.face_blendshapes:
+                    blendshapes = b.processBlendshapes(result.face_blendshapes[0])
 
-            # self.frame_ready.emit(frame)
-            blendshapes = {"temp" : -1} # temporary cause if I remember correctly server currently drops packets with empty blendshape
-            if result.face_blendshapes:
-                blendshapes = b.processBlendshapes(result.face_blendshapes[0])
+                landmarks = []
+                if result.face_landmarks:
+                    if self.show_mesh:
+                        imu.draw_face_landmarks(rgb, result.face_landmarks)
+                    landmarks = result.face_landmarks[0]
 
-            landmarks = []
-            if result.face_landmarks:
-                if self.show_mesh:
-                    imu.draw_face_landmarks(rgb, result.face_landmarks)
-                landmarks = result.face_landmarks[0]
+                if result.face_blendshapes or result.face_landmarks:
+                    self.tracking_data_ready.emit((landmarks, blendshapes))
 
-            if result.face_blendshapes or result.face_landmarks:
-                self.tracking_data_ready.emit((landmarks, blendshapes))
-
-            frame = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-            self.frame_ready.emit(frame)
+                frame = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                self.frame_ready.emit(frame)
 
         self.cap.release()
 

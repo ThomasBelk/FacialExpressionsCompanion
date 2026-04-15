@@ -56,10 +56,12 @@ class FormField(QWidget):
 class ToggleButton(QPushButton):
     toggledState = Signal(bool)
 
-    def __init__(self, text_on="Show", text_off="Hide", initial_state=False, max_width=60, min_width=40, parent=None):
+    def __init__(self, text_on="Show", text_off="Hide", initial_state=False, max_width=60, min_width=40, tooltip_on="", tooltip_off="", parent=None):
         super().__init__(text_on, parent)
         self.text_on = text_on
         self.text_off = text_off
+        self.tooltip_on = tooltip_on
+        self.tooltip_off = tooltip_off
         self.setCheckable(True)
         self.setMinimumWidth(min_width)
         self.setMaximumWidth(max_width)
@@ -71,8 +73,10 @@ class ToggleButton(QPushButton):
     def _on_clicked(self):
         if self.isChecked():
             self.setText(self.text_off)
+            self.setToolTip(self.tooltip_off)
         else:
             self.setText(self.text_on)
+            self.setToolTip(self.tooltip_on)
         self.toggledState.emit(self.isChecked())
 
 
