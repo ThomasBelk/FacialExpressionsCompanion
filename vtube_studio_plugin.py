@@ -30,15 +30,9 @@ class VTubeStudioDataHandler(QThread):
         self.uri = uri
         self.token = token
 
-    # -------------------------
-    # QThread entry point (SYNC)
-    # -------------------------
     def run(self):
         asyncio.run(self.main())
 
-    # -------------------------
-    # Main async loop
-    # -------------------------
     async def main(self):
         try:
             async with websockets.connect(self.uri) as wb:
@@ -71,9 +65,6 @@ class VTubeStudioDataHandler(QThread):
         except Exception as e:
             print("Connection error:", e)
 
-    # -------------------------
-    # STATE: STARTUP
-    # -------------------------
     async def initialConnection(self, wb):
         print("Requesting API state...")
 
@@ -87,15 +78,11 @@ class VTubeStudioDataHandler(QThread):
         response = json.loads(await wb.recv())
         print("API State Response:", response)
 
-        # Decide next step
         if self.token is None:
             self.state = PluginStatus.GET_AUTH_TOKEN
         else:
             self.state = PluginStatus.AWAIT_PERMISSIONS
 
-    # -------------------------
-    # STATE: GET_AUTH_TOKEN
-    # -------------------------
     async def getAuthToken(self, wb):
         print("Requesting auth token...")
 
@@ -119,9 +106,6 @@ class VTubeStudioDataHandler(QThread):
         except KeyError:
             self.state = PluginStatus.ERROR
 
-    # -------------------------
-    # STATE: AUTHENTICATE
-    # -------------------------
     async def authRequest(self, wb):
         print("Sending auth request...")
 
@@ -146,9 +130,6 @@ class VTubeStudioDataHandler(QThread):
         else:
             self.state = PluginStatus.PERMISSIONS_ERROR
 
-    # -------------------------
-    # DATA LOOPS (SEND + RECEIVE)
-    # -------------------------
     async def run_data_loops(self, wb):
         print("Starting data loops...")
 
@@ -182,7 +163,6 @@ class VTubeStudioDataHandler(QThread):
                         print(params)
 
                     else:
-                        # Optional debug
                         print(msg_type)
                         pass
 
@@ -193,9 +173,6 @@ class VTubeStudioDataHandler(QThread):
 
         await asyncio.gather(send_loop(), receive_loop())
 
-    # -------------------------
-    # STOP THREAD CLEANLY
-    # -------------------------
     def stop(self):
         self.running = False
 
