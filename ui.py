@@ -1,9 +1,11 @@
 from PySide6.QtWidgets import (
     QWidget, QLineEdit, QPushButton,
-    QHBoxLayout, QLabel, QSizePolicy, QComboBox
+    QHBoxLayout, QLabel, QSizePolicy, QComboBox, QScrollArea, QVBoxLayout
 )
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, QTimer, Qt
 from pygrabber.dshow_graph import FilterGraph
+from blendshapes import DESIRED_BLENDSHAPES
+from vtube_studio_plugin import VTubeStudioSettingsData
 
 
 class FormField(QWidget):
@@ -79,8 +81,160 @@ class ToggleButton(QPushButton):
             self.setToolTip(self.tooltip_on)
         self.toggledState.emit(self.isChecked())
 
+    def mySetChecked(self, state):
+        self.setChecked(state)
+        if state:
+            self.setText(self.text_off)
+            self.setToolTip(self.tooltip_off)
+        else:
+            self.setText(self.text_on)
+            self.setToolTip(self.tooltip_on)
 
-class CameraSelector(QComboBox):
+
+class MappingWidget(QWidget):
+    mappingChanged = Signal(str, str)
+    def __init__(self, selectedVTSParam=None, mapToParam=None, parent=None):
+        super().__init__(parent)
+        self.vtsParams = []
+
+        self.selectedVTSParam = selectedVTSParam
+        self.mapToParam = mapToParam
+
+        self.selectedVTSParamDropDown=NoHoverScrollComboBox()
+        self.selectedVTSParamDropDown.setFixedWidth(175)
+        self.selectedVTSParamDropDown.addItem("None")
+        self.mapToParamLabel = QLabel(self.mapToParam)
+        layout = QHBoxLayout()
+        layout.addWidget(self.mapToParamLabel)
+        layout.addWidget(self.selectedVTSParamDropDown)
+        self.setLayout(layout)
+        self.setFixedWidth(300)
+
+    # this will run after we get parameters from vtube studio
+    def lateSetup(self, vtsParams):
+        self.vtsParams = vtsParams
+        self.selectedVTSParamDropDown.blockSignals(True)
+
+        self.selectedVTSParamDropDown.clear()
+        self.selectedVTSParamDropDown.addItem("None")
+        self.selectedVTSParamDropDown.addItems(self.vtsParams)
+
+        index = self.selectedVTSParamDropDown.findText(self.selectedVTSParam)
+        if index != -1:
+            self.selectedVTSParamDropDown.setCurrentIndex(index)
+        else:
+            self.selectedVTSParamDropDown.setCurrentIndex(0)
+
+        self.selectedVTSParamDropDown.blockSignals(False)
+
+        # by connecting it should not be reset to none by onChanged
+        self.selectedVTSParamDropDown.currentTextChanged.connect(self.onChanged)
+
+    def onChanged(self):
+        self.selectedVTSParam = self.selectedVTSParamDropDown.currentText()
+        self.mappingChanged.emit(self.mapToParam, self.selectedVTSParam,)
+
+
+class VTubeStudioSettingWidget(QWidget):
+    def __init__(self, settings_mappings:VTubeStudioSettingsData, parent=None):
+        super().__init__(parent)
+        self.settingsMappings = settings_mappings
+        self.vParamList = []
+
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+
+        mainLayout = QVBoxLayout(self)
+
+        label = QLabel("VTube Studio Mappings")
+        label.setAlignment(Qt.AlignCenter)
+        font = label.font()
+        font.setPointSize(16)
+        label.setFont(font)
+
+        mainLayout.addWidget(label)
+
+        mainLayout.addWidget(self.scroll)
+
+        self.container = QWidget()
+        self.scroll.setWidget(self.container)
+
+        self.hbox = QHBoxLayout(self.container)
+        self.hbox.setSpacing(20)
+
+        self.widgets = []
+        for i in DESIRED_BLENDSHAPES:
+            w = MappingWidget(self.settingsMappings.getValue(i, "None"), i)
+            if len(self.vParamList) > 0:
+                w.lateSetup(self.vParamList)
+            w.mappingChanged.connect(self.updateMapping)
+            self.widgets.append(w)
+
+        self.current_columns = 0
+        QTimer.singleShot(0, self.rebuild_layout)
+
+    def updateVTubeStudioParamOptions(self, paramsList):
+        print("Called with list", paramsList)
+        if len(self.vParamList) != len(paramsList):
+            self.vParamList = paramsList
+            for w in self.widgets:
+                if isinstance(w, MappingWidget):
+                    w.lateSetup(paramsList)
+
+    def updateMapping(self, key, value):
+        self.settingsMappings.updateMapping(key, value)
+
+    def get_column_count(self, width):
+        # this feels a bit dumb, like a use case for mod, but I also don't know if I don't think 5 columns is readable
+        if width < 650:
+            return 1
+        elif width < 1000:
+            return 2
+        elif width < 1600:
+            return 3
+        else:
+            return 4
+
+    def rebuild_layout(self):
+        width = self.scroll.viewport().width()
+        cols = self.get_column_count(width)
+
+        if cols == self.current_columns:
+            return
+
+        self.current_columns = cols
+
+        while self.hbox.count():
+            item = self.hbox.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        columns = [QVBoxLayout() for _ in range(cols)]
+
+        for i, widget in enumerate(self.widgets):
+            columns[i % cols].addWidget(widget)
+
+        for col in columns:
+            col.addStretch()
+            colWidget = QWidget()
+            colWidget.setLayout(col)
+            self.hbox.addWidget(colWidget)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.rebuild_layout()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.rebuild_layout()
+
+# this is just so that you don't accidentally change the combo box option when trying to scroll
+class NoHoverScrollComboBox(QComboBox):
+    def wheelEvent(self, event):
+        event.ignore()
+
+
+class CameraSelector(NoHoverScrollComboBox):
     cameraChanged = Signal(int, str)  # index, name
 
     def __init__(self, parent=None):

@@ -4,7 +4,7 @@ import time
 
 from PySide6.QtGui import QCloseEvent, QScreen, QIcon
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, QSizePolicy, \
-    QFormLayout, QHBoxLayout
+    QFormLayout, QHBoxLayout, QStackedWidget
 from PySide6.QtCore import QSettings, Qt, QThread, Signal
 from PySide6.QtGui import QPixmap, QIntValidator
 
@@ -16,8 +16,9 @@ import eye_direction as d
 import file_utils as fu
 
 from network import UDPSender
-from ui import FormField, ToggleButton, CameraSelector
+from ui import FormField, ToggleButton, CameraSelector, MappingWidget, VTubeStudioSettingWidget
 from update_checker import cleanup_temp_update, get_update_info
+from vtube_studio_plugin import VTubeStudioDataHandler, VTubeStudioSettingsData
 
 DEFAULT_IP = "localhost"
 DEFAULT_PORT = 25590
@@ -47,7 +48,13 @@ class MainWindow(QMainWindow):
 
         self.show_video = False
         self.show_mesh = True
-        self.use_vtube_studio_tracking = bool(self.settings.value("VTubeStudioTracking", False))
+        self.use_vtube_studio_tracking = self.settings.value(
+            "VTubeStudioTracking",
+            False,
+            type=bool
+        )
+        self.vTubeStudioSettingsData = VTubeStudioSettingsData(self.settings)
+        print(self.use_vtube_studio_tracking)
 
 
         self.faceId = self.settings.value("FaceId", "")
@@ -75,23 +82,13 @@ class MainWindow(QMainWindow):
         self.setUDPTarget.emit(str(self.serverIp), int(self.port))
         self.cameraSelector = CameraSelector()
 
-        self.video_label = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
-        self.video_label.setSizePolicy(
-            QSizePolicy.Policy.Ignored,
-            QSizePolicy.Policy.Ignored
-        )
-        self.video_label.setMinimumSize(1, 1)
-        initialCameraIndex = self.cameraSelector.findIndexFromName(self.selectedCameraName)
-
-        self.cameraSelector.setCurrentIndex(initialCameraIndex)
-        self.camera = CameraThread(initialCameraIndex)
-        self.camera.frame_ready.connect(self.updateFrame)
-        self.camera.tracking_data_ready.connect(self.handleTrackingData)
-        self.setShowMesh.connect(self.camera.setShowMesh)
-        self.setCamera.connect(self.camera.switch_camera)
-        self.cameraSelector.cameraChanged.connect(self.updateCamera)
-        self.camera.start()
-        self.tracker = d.EyeTracker(warmup_frames=300)
+        if not self.use_vtube_studio_tracking:
+            self.vtubeStudioThread = None
+            self.startCameraThread()
+        else:
+            self.camera = None
+            self.vTubeStudioSettingsWidget = None
+            self.startVTubeStudioThread()
         self.initUI()
 
 
@@ -104,6 +101,13 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon(str(icon_path)))
         self.restoreWindowState()
 
+        self.video_label = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
+        self.video_label.setSizePolicy(
+            QSizePolicy.Policy.Ignored,
+            QSizePolicy.Policy.Ignored
+        )
+        self.video_label.setMinimumSize(1, 1)
+
         # Layout Stuff
         form = QFormLayout()
         form.addRow(self.faceIdInput)
@@ -114,32 +118,73 @@ class MainWindow(QMainWindow):
         formConatiner = QWidget()
         formConatiner.setLayout(form)
 
-        showCameraButton = ToggleButton("Show Camera", "Hide Camera", self.show_video,120,110)
-        showCameraButton.toggledState.connect(self.setVideo)
-        showFaceMeshButton = ToggleButton("Show Face Mesh", "Hide Face Mesh", self.show_mesh, 120, 110)
-        showFaceMeshButton.toggledState.connect(self.updateShowMesh)
+        self.showCameraButton = ToggleButton("Show Camera", "Hide Camera", self.show_video,120,110)
+        self.showCameraButton.toggledState.connect(self.setVideo)
+        self.showFaceMeshButton = ToggleButton("Show Face Mesh", "Hide Face Mesh", self.show_mesh, 120, 110)
+        self.showFaceMeshButton.toggledState.connect(self.updateShowMesh)
 
         useVTubeStudioButton = ToggleButton("Use VTube Studio Tracking", "Use Webcam Tracking", self.use_vtube_studio_tracking, 180, 170, "Click to receive tracking from VTube Studio.", "Click to use webcam tracking.")
         useVTubeStudioButton.toggledState.connect(self.updateVTubeStudioTracking)
 
         hbox = QHBoxLayout()
         hbox.addWidget(self.cameraSelector)
-        hbox.addWidget(showCameraButton)
-        hbox.addWidget(showFaceMeshButton)
+        hbox.addWidget(self.showCameraButton)
+        hbox.addWidget(self.showFaceMeshButton)
         hbox.addWidget(useVTubeStudioButton)
         hbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hboxWidget = QWidget()
         hboxWidget.setLayout(hbox)
 
+        self.uiStack = QStackedWidget()
+        self.uiStack.addWidget(self.video_label)
+        self.vTubeStudioSettingsWidget = VTubeStudioSettingWidget(self.vTubeStudioSettingsData)
+        self.uiStack.addWidget(self.vTubeStudioSettingsWidget)
+
         vbox = QVBoxLayout()
         vbox.setSpacing(0)
         vbox.addWidget(formConatiner)
         vbox.addWidget(hboxWidget, 0)
-        vbox.addWidget(self.video_label, 1)
+        vbox.addWidget(self.uiStack, 1)
         self.setCentralWidget(self.containerWidget)
         self.containerWidget.setLayout(vbox)
 
+        if self.use_vtube_studio_tracking:
+            self.showCameraButton.setEnabled(False)
+            self.showFaceMeshButton.setEnabled(False)
+            self.cameraSelector.setEnabled(False)
+            self.uiStack.setCurrentIndex(1)
+            if self.vtubeStudioThread:
+                self.vtubeStudioThread.parameter_list_ready.connect(self.vTubeStudioSettingsWidget.updateVTubeStudioParamOptions)
+
         self.setFocus()
+
+    def startCameraThread(self):
+        initialCameraIndex = self.cameraSelector.findIndexFromName(self.selectedCameraName)
+        self.cameraSelector.setCurrentIndex(initialCameraIndex)
+        self.camera = CameraThread(initialCameraIndex)
+        self.camera.frame_ready.connect(self.updateFrame)
+        self.camera.tracking_data_ready.connect(self.handleTrackingData)
+        self.setShowMesh.connect(self.camera.setShowMesh)
+        self.setCamera.connect(self.camera.switch_camera)
+        self.cameraSelector.cameraChanged.connect(self.updateCamera)
+        self.camera.start()
+        self.tracker = d.EyeTracker(warmup_frames=300)
+
+    def stopCameraThread(self):
+        if self.camera:
+            self.camera.stop()
+        if self.showCameraButton:
+            self.showCameraButton.mySetChecked(False)
+
+    def startVTubeStudioThread(self):
+        self.vtubeStudioThread = VTubeStudioDataHandler(self.vTubeStudioSettingsData)
+        if self.vTubeStudioSettingsWidget:
+            self.vtubeStudioThread.parameter_list_ready.connect(self.vTubeStudioSettingsWidget.updateVTubeStudioParamOptions)
+        self.vtubeStudioThread.start()
+
+    def stopVTubeStudioThread(self):
+        self.vtubeStudioThread.stop()
+        self.vtubeStudioThread = None
 
     def restoreWindowState(self):
         app = QApplication.instance()
@@ -229,12 +274,13 @@ class MainWindow(QMainWindow):
             "lookDir": lookDir,
             "blendshapes": blendshapes,
         }
-        # print(packet)
+        print(packet)
         self.sendUDPPacket.emit(packet)
 
 
     def closeEvent(self, event: QCloseEvent):
-        self.camera.stop()
+        if self.camera:
+            self.camera.stop()
 
         self.settings.setValue("WindowSize", self.size())
         self.settings.setValue("ScreenName", self.screen().name())
@@ -244,6 +290,7 @@ class MainWindow(QMainWindow):
         self.settings.setValue("Port", str(self.port))
         self.settings.setValue("Camera", self.selectedCameraName)
         self.settings.setValue("VTubeStudioTracking", self.use_vtube_studio_tracking)
+        self.vTubeStudioSettingsData.saveMappings()
         self.settings.sync()
         event.accept()
 
@@ -277,6 +324,21 @@ class MainWindow(QMainWindow):
 
     def updateVTubeStudioTracking(self, checked: bool):
         self.use_vtube_studio_tracking = checked
+        if self.use_vtube_studio_tracking:
+            self.stopCameraThread()
+            self.setVideo(False)
+            self.showCameraButton.setEnabled(False) # doing this cause there will be no camera feed and it will not be on the same page
+            self.showFaceMeshButton.setEnabled(False)
+            self.cameraSelector.setEnabled(False)
+            self.uiStack.setCurrentIndex(1)
+            self.startVTubeStudioThread()
+        else:
+            self.stopVTubeStudioThread()
+            self.showCameraButton.setEnabled(True)
+            self.showFaceMeshButton.setEnabled(True)
+            self.cameraSelector.setEnabled(True)
+            self.startCameraThread()
+            self.uiStack.setCurrentIndex(0)
 
 
 def main():
