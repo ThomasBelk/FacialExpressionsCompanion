@@ -1,11 +1,13 @@
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QWidget, QLineEdit, QPushButton,
-    QHBoxLayout, QLabel, QSizePolicy, QComboBox, QScrollArea, QVBoxLayout
+    QHBoxLayout, QLabel, QSizePolicy, QComboBox, QScrollArea, QVBoxLayout, QDialog, QCheckBox
 )
 from PySide6.QtCore import Signal, QTimer, Qt
 from pygrabber.dshow_graph import FilterGraph
 from blendshapes import DESIRED_BLENDSHAPES
 from vtube_studio_plugin import VTubeStudioSettingsData
+import file_utils as fu
 
 
 class FormField(QWidget):
@@ -92,13 +94,15 @@ class ToggleButton(QPushButton):
 
 
 class MappingWidget(QWidget):
-    mappingChanged = Signal(str, str)
-    def __init__(self, selectedVTSParam=None, mapToParam=None, parent=None):
+    mappingChanged = Signal(str, str, bool)
+    def __init__(self, selectedVTSParam=None, mapToParam=None, inverted=False, parent=None):
         super().__init__(parent)
         self.vtsParams = []
 
         self.selectedVTSParam = selectedVTSParam
         self.mapToParam = mapToParam
+        self.invertCheckbox = QCheckBox("Invert Parameter")
+        self.invertCheckbox.setChecked(inverted)
 
         self.selectedVTSParamDropDown=NoHoverScrollComboBox()
         self.selectedVTSParamDropDown.setFixedWidth(175)
@@ -107,8 +111,9 @@ class MappingWidget(QWidget):
         layout = QHBoxLayout()
         layout.addWidget(self.mapToParamLabel)
         layout.addWidget(self.selectedVTSParamDropDown)
+        layout.addWidget(self.invertCheckbox)
         self.setLayout(layout)
-        self.setFixedWidth(300)
+        self.setFixedWidth(425)
 
     # this will run after we get parameters from vtube studio
     def lateSetup(self, vtsParams):
@@ -129,10 +134,11 @@ class MappingWidget(QWidget):
 
         # by connecting it should not be reset to none by onChanged
         self.selectedVTSParamDropDown.currentTextChanged.connect(self.onChanged)
+        self.invertCheckbox.toggled.connect(self.onChanged)
 
-    def onChanged(self):
+    def onChanged(self, *args):
         self.selectedVTSParam = self.selectedVTSParamDropDown.currentText()
-        self.mappingChanged.emit(self.mapToParam, self.selectedVTSParam,)
+        self.mappingChanged.emit(self.mapToParam, self.selectedVTSParam, self.invertCheckbox.isChecked())
 
 
 class VTubeStudioSettingWidget(QWidget):
@@ -164,7 +170,7 @@ class VTubeStudioSettingWidget(QWidget):
 
         self.widgets = []
         for i in DESIRED_BLENDSHAPES:
-            w = MappingWidget(self.settingsMappings.getValue(i, "None"), i)
+            w = MappingWidget(self.settingsMappings.getValue(i, "None"), i, self.settingsMappings.isInverted(i))
             if len(self.vParamList) > 0:
                 w.lateSetup(self.vParamList)
             w.mappingChanged.connect(self.updateMapping)
@@ -181,16 +187,17 @@ class VTubeStudioSettingWidget(QWidget):
                 if isinstance(w, MappingWidget):
                     w.lateSetup(paramsList)
 
-    def updateMapping(self, key, value):
-        self.settingsMappings.updateMapping(key, value)
+    def updateMapping(self, key, value, invertedFlag):
+        self.settingsMappings.updateMapping(key, value, invertedFlag)
 
     def get_column_count(self, width):
-        # this feels a bit dumb, like a use case for mod, but I also don't know if I don't think 5 columns is readable
-        if width < 650:
+        # this feels a bit dumb magic numbers and all, and max 4 columns? but I also don't know if I don't think 5 columns is readable
+        # never thought I would miss CSS. On second thought idk man. CSS makes me sad
+        if width < 900:
             return 1
-        elif width < 1000:
+        elif width < 1400:
             return 2
-        elif width < 1600:
+        elif width < 1850:
             return 3
         else:
             return 4
@@ -277,3 +284,58 @@ class CameraSelector(NoHoverScrollComboBox):
             self.currentCameraIndex(),
             self.currentCameraName()
         )
+
+
+class SimpleDialog(QDialog):
+    def __init__(self, title:str, bodyText:str, width=300, height=120, useLeftButton=False, useRightButton=True, leftButtonText="Accept", rightButtonText="Cancel", parent=None):
+        super().__init__()
+        self.bodyText = bodyText
+        self.useLeftButton = useLeftButton
+        self.useRightButton = useRightButton
+        self.leftButtonText = leftButtonText
+        self.rightButtonText = rightButtonText
+
+        self.setWindowTitle(title)
+        self.setFixedSize(width, height)
+        icon_path = fu.resource_path("icons/rtfelogo.png")
+        self.setWindowIcon(QIcon(str(icon_path)))
+
+        self.label = QLabel(self.bodyText)
+        self.label.setWordWrap(True)
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.leftButton = QPushButton(self.leftButtonText)
+        self.rightButton = QPushButton(self.rightButtonText)
+        self.leftButton.clicked.connect(self.handleLeftButton)
+        self.rightButton.clicked.connect(self.handleRightButton)
+
+        self.toggleButtonVisibility(self.leftButton, self.useLeftButton)
+        self.toggleButtonVisibility(self.rightButton, self.useRightButton)
+
+
+        layout = QVBoxLayout()
+        horizontal_layout = QHBoxLayout()
+        layout.addWidget(self.label)
+        horizontal_layout.addWidget(self.leftButton)
+        horizontal_layout.addWidget(self.rightButton)
+        layout.addLayout(horizontal_layout)
+
+        self.setLayout(layout)
+
+    def setBodyText(self, bodyText:str):
+        self.bodyText = bodyText
+        self.label.setText(self.bodyText)
+
+    def handleRightButton(self):
+        self.accept()
+
+    def toggleButtonVisibility(self, button:QPushButton, active):
+        if active:
+            button.setEnabled(True)
+            button.setHidden(False)
+        else:
+            button.setEnabled(False)
+            button.setHidden(True)
+
+    def handleLeftButton(self):
+        # does python allow passing lambdas as function arguments? I think it does
+        pass

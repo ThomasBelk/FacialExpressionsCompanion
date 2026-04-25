@@ -21,12 +21,13 @@ class PluginStatus(Enum):
     AWAIT_PERMISSIONS = auto()
     SEND_AND_RECEIVE_DATA = auto()
     PERMISSIONS_ERROR = auto()
-    ERROR = auto()
 
 
 class VTubeStudioDataHandler(QThread):
     studio_tracking_ready = Signal(object)
     parameter_list_ready = Signal(list)
+    accept_auth_notification = Signal(bool)
+    vts_error = Signal(str)
 
     def __init__(self, settings, uri=DEFAULT_WEBSOCKET_URI, parent=None):
         super().__init__(parent)
@@ -38,6 +39,7 @@ class VTubeStudioDataHandler(QThread):
         self.vSettings = settings
         self.converter = VTubeStudioParameterConverter(self.vSettings)
         self.vParamList = []
+        self.authFailCount = 0
 
     def run(self):
         asyncio.run(self.main())
@@ -64,15 +66,14 @@ class VTubeStudioDataHandler(QThread):
                             return  # exit after loops stop
 
                         case PluginStatus.PERMISSIONS_ERROR:
-                            print("Permission error")
-                            return
-
-                        case PluginStatus.ERROR:
-                            print("General error")
+                            m = "Error receiving permissions from VTube Studio. Likely because you denied permissions to the plugin in VTube Studio."
+                            self.vts_error.emit(m)
                             return
 
         except Exception as e:
-            print("Connection error:", e)
+            m = "Error connecting to VTube Studio, make sure VTubeStudio is open. Error message: " + str(e)
+            self.vts_error.emit(m)
+
 
     async def initialConnection(self, wb):
         print("Requesting API state...")
@@ -95,9 +96,7 @@ class VTubeStudioDataHandler(QThread):
     async def getAuthToken(self, wb):
         print("Requesting auth token...")
 
-        ## open popup
-        # window = VTubeStudioPluginAuthWindow()
-        # window.show()
+        self.accept_auth_notification.emit(True)
 
         await wb.send(json.dumps({
             "apiName": "VTubeStudioPublicAPI",
@@ -112,6 +111,7 @@ class VTubeStudioDataHandler(QThread):
 
         response = json.loads(await wb.recv())
         print("Token Response:", response)
+        self.accept_auth_notification.emit(False)
 
         try:
             self.vSettings.setToken(response["data"]["authenticationToken"])
@@ -119,7 +119,7 @@ class VTubeStudioDataHandler(QThread):
             ## close window cause we received the token
             # window.accept()
         except KeyError:
-            self.state = PluginStatus.ERROR
+            print("Key error")
 
     async def authRequest(self, wb):
         print("Sending auth request...")
@@ -142,29 +142,15 @@ class VTubeStudioDataHandler(QThread):
         if response.get("data", {}).get("authenticated", False):
             print("Authenticated!")
             self.state = PluginStatus.SEND_AND_RECEIVE_DATA
+        elif self.authFailCount < 2:
+            self.authFailCount += 1
+            self.vSettings.setToken(None)
+            self.state = PluginStatus.GET_AUTH_TOKEN
         else:
             self.state = PluginStatus.PERMISSIONS_ERROR
 
     async def run_data_loops(self, wb):
         print("Starting data loops...")
-
-        await wb.send(json.dumps({
-            "apiName": "VTubeStudioPublicAPI",
-            "apiVersion": "1.0",
-            "requestID": "RequestParamCreation",
-            "messageType": "ParameterCreationRequest",
-            "data": {
-                "parameterName": "MyParam",
-                "explanation": "This is my new parameter.",
-                "min": -50,
-                "max": 50,
-                "defaultValue": 10
-            }
-        }))
-
-        response = json.loads(await wb.recv())
-        print(response)
-        # sys.exit(0)
 
         async def send_loop():
             while self.running:
@@ -182,7 +168,6 @@ class VTubeStudioDataHandler(QThread):
 
                 except Exception as e:
                     print("Send error:", e)
-                    self.state = PluginStatus.ERROR
                     break
 
         async def receive_loop():
@@ -199,7 +184,8 @@ class VTubeStudioDataHandler(QThread):
                             self.vParamList = self.converter.getParameterNamesAsList(response["data"])
                             self.parameter_list_ready.emit(self.vParamList)
                             print("emitting list")
-                        print(processedData)
+                        else:
+                            self.studio_tracking_ready.emit(processedData)
 
                     else:
                         print(msg_type)
@@ -207,7 +193,6 @@ class VTubeStudioDataHandler(QThread):
 
                 except Exception as e:
                     print("Receive error:", e)
-                    self.state = PluginStatus.ERROR
                     break
 
         await asyncio.gather(send_loop(), receive_loop())
@@ -246,10 +231,9 @@ class VTubeStudioSettingsData:
         self.settings = settings
         self.token = settings.value("VTubeStudioToken", None)
 
-        self.mappings = {i: None for i in DESIRED_BLENDSHAPES}
+        self.mappings = {i: {"value": None, "inverted": False} for i in DESIRED_BLENDSHAPES}
         raw = self.settings.value("VTubeStudioMappings", "{}")
 
-        # redundant but pycharm is complaining
         if raw is None:
             raw = "{}"
 
@@ -258,8 +242,12 @@ class VTubeStudioSettingsData:
         except json.JSONDecodeError:
             loaded = {}
 
-        self.mappings.update(loaded)
-        print(self.mappings)
+        for k, v in loaded.items():
+            self.mappings[k] = {
+                "value": v.get("value"),
+                "inverted": v.get("inverted", False)
+            }
+
 
     def saveMappings(self):
         self.settings.setValue(
@@ -275,18 +263,24 @@ class VTubeStudioSettingsData:
         return self.token
 
     def saveToken(self):
-        self.settings.setValue(
-            "VTubeStudioToken", self.token
-        )
+        self.settings.setValue("VTubeStudioToken", self.token)
 
-    def updateMapping(self, key, value):
-        self.mappings[key] = value
-        # I'm not super sure about this, but it does make it more resilient to crashes
+    def updateMapping(self, key, value=None, inverted=None):
+        current = self.mappings.get(key, {"value": None, "inverted": False})
+
+        if value is not None:
+            current["value"] = value
+        if inverted is not None:
+            current["inverted"] = inverted
+
+        self.mappings[key] = current
         self.saveMappings()
 
     def getValue(self, key, default=None):
-        # print(key)
-        return self.mappings.get(key, default)
+        return self.mappings.get(key, {}).get("value", default)
+
+    def isInverted(self, key):
+        return self.mappings.get(key, {}).get("inverted", False)
 
 
 class VTubeStudioParameterConverter:
@@ -306,6 +300,9 @@ class VTubeStudioParameterConverter:
             for p in data.get(group, [])
         ]
 
+    def invertParam(self, value: float):
+        return 1 - value
+
     def convert(self, data):
         ret = {}
         param_map = {
@@ -321,6 +318,9 @@ class VTubeStudioParameterConverter:
 
             if vParam is not None:
                 ret[i] = self.normalizeParam(vParam["value"], vParam["min"], vParam["max"])
+                if self.mappings.isInverted(i):
+                    ret[i] = self.invertParam(ret[i])
+
 
         return ret
 

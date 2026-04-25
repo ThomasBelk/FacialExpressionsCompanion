@@ -1,10 +1,9 @@
 import ctypes
 import sys
-import time
 
 from PySide6.QtGui import QCloseEvent, QScreen, QIcon
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel, QSizePolicy, \
-    QFormLayout, QHBoxLayout, QStackedWidget
+    QFormLayout, QHBoxLayout, QStackedWidget, QDialog
 from PySide6.QtCore import QSettings, Qt, QThread, Signal
 from PySide6.QtGui import QPixmap, QIntValidator
 
@@ -16,9 +15,9 @@ import eye_direction as d
 import file_utils as fu
 
 from network import UDPSender
-from ui import FormField, ToggleButton, CameraSelector, MappingWidget, VTubeStudioSettingWidget
+from ui import FormField, ToggleButton, CameraSelector, VTubeStudioSettingWidget, SimpleDialog
 from update_checker import cleanup_temp_update, get_update_info
-from vtube_studio_plugin import VTubeStudioDataHandler, VTubeStudioSettingsData
+from vtube_studio_plugin import VTubeStudioDataHandler, VTubeStudioSettingsData, VTubeStudioPluginAuthWindow
 
 DEFAULT_IP = "localhost"
 DEFAULT_PORT = 25590
@@ -54,7 +53,7 @@ class MainWindow(QMainWindow):
             type=bool
         )
         self.vTubeStudioSettingsData = VTubeStudioSettingsData(self.settings)
-        print(self.use_vtube_studio_tracking)
+        self.acceptAuthWindow = None
 
 
         self.faceId = self.settings.value("FaceId", "")
@@ -123,14 +122,14 @@ class MainWindow(QMainWindow):
         self.showFaceMeshButton = ToggleButton("Show Face Mesh", "Hide Face Mesh", self.show_mesh, 120, 110)
         self.showFaceMeshButton.toggledState.connect(self.updateShowMesh)
 
-        useVTubeStudioButton = ToggleButton("Use VTube Studio Tracking", "Use Webcam Tracking", self.use_vtube_studio_tracking, 180, 170, "Click to receive tracking from VTube Studio.", "Click to use webcam tracking.")
-        useVTubeStudioButton.toggledState.connect(self.updateVTubeStudioTracking)
+        self.useVTubeStudioButton = ToggleButton("Use VTube Studio Tracking", "Use Webcam Tracking", self.use_vtube_studio_tracking, 180, 170, "Click to receive tracking from VTube Studio.", "Click to use webcam tracking.")
+        self.useVTubeStudioButton.toggledState.connect(self.updateVTubeStudioTracking)
 
         hbox = QHBoxLayout()
         hbox.addWidget(self.cameraSelector)
         hbox.addWidget(self.showCameraButton)
         hbox.addWidget(self.showFaceMeshButton)
-        hbox.addWidget(useVTubeStudioButton)
+        hbox.addWidget(self.useVTubeStudioButton)
         hbox.setAlignment(Qt.AlignmentFlag.AlignCenter)
         hboxWidget = QWidget()
         hboxWidget.setLayout(hbox)
@@ -155,6 +154,9 @@ class MainWindow(QMainWindow):
             self.uiStack.setCurrentIndex(1)
             if self.vtubeStudioThread:
                 self.vtubeStudioThread.parameter_list_ready.connect(self.vTubeStudioSettingsWidget.updateVTubeStudioParamOptions)
+                self.vtubeStudioThread.vts_error.connect(self.handleVTSError)
+                self.vtubeStudioThread.accept_auth_notification.connect(self.handleAcceptAuthWindow)
+                self.vtubeStudioThread.studio_tracking_ready.connect(self.handleVTSTrackingData)
 
         self.setFocus()
 
@@ -180,11 +182,28 @@ class MainWindow(QMainWindow):
         self.vtubeStudioThread = VTubeStudioDataHandler(self.vTubeStudioSettingsData)
         if self.vTubeStudioSettingsWidget:
             self.vtubeStudioThread.parameter_list_ready.connect(self.vTubeStudioSettingsWidget.updateVTubeStudioParamOptions)
+        self.vtubeStudioThread.vts_error.connect(self.handleVTSError)
+        self.vtubeStudioThread.accept_auth_notification.connect(self.handleAcceptAuthWindow)
+        self.vtubeStudioThread.studio_tracking_ready.connect(self.handleVTSTrackingData)
         self.vtubeStudioThread.start()
 
     def stopVTubeStudioThread(self):
         self.vtubeStudioThread.stop()
         self.vtubeStudioThread = None
+
+    def handleVTSError(self, message):
+        s = SimpleDialog("Error", message, rightButtonText="Close")
+        s.exec()
+        self.useVTubeStudioButton.mySetChecked(False)
+        self.updateVTubeStudioTracking(False)
+
+    def handleAcceptAuthWindow(self, flag):
+        if flag and self.acceptAuthWindow is None:
+            self.acceptAuthWindow = VTubeStudioPluginAuthWindow()
+            self.acceptAuthWindow.show()
+        elif not flag and self.acceptAuthWindow is not None:
+            self.acceptAuthWindow.close()
+            self.acceptAuthWindow = None
 
     def restoreWindowState(self):
         app = QApplication.instance()
@@ -246,6 +265,17 @@ class MainWindow(QMainWindow):
         self.send_face_packet(str(self.faceId), lookdir, blendshapes)
 
 
+    def handleVTSTrackingData(self, data):
+        lookdir = "center"
+        ## TODO: eye tracking for vts. Will need some way to grab the right parameter.
+        blendshapes = {"temp": -1}
+        if len(data) > 0:
+            blendshapes = data
+
+        self.send_face_packet(str(self.faceId), lookdir, blendshapes)
+
+
+
     def eye_enum(self, x, y, deadzone=0.25):
         vert = None
         horiz = None
@@ -281,6 +311,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent):
         if self.camera:
             self.camera.stop()
+        if self.vtubeStudioThread:
+            self.stopVTubeStudioThread()
 
         self.settings.setValue("WindowSize", self.size())
         self.settings.setValue("ScreenName", self.screen().name())
