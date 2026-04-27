@@ -3,7 +3,7 @@ import websockets
 import json
 import time
 
-from PySide6.QtCore import Qt, QThread, Signal, QSettings
+from PySide6.QtCore import Qt, QThread, Signal, QSettings, Slot
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout, QHBoxLayout
 import file_utils as fu
@@ -13,6 +13,7 @@ from blendshapes import DESIRED_PARAMETERS
 
 PLUGIN_NAME = "Real Facial Expressions (Hytale Expression Tracking Plugin)"
 PLUGIN_AUTHOR = "Thomas Belk"
+LOCAL_HOST_URI = "ws://localhost:"
 DEFAULT_WEBSOCKET_URI = "ws://localhost:8001"
 
 class PluginStatus(Enum):
@@ -29,12 +30,16 @@ class VTubeStudioDataHandler(QThread):
     accept_auth_notification = Signal(bool)
     vts_error = Signal(str, bool)
 
-    def __init__(self, settings, uri=DEFAULT_WEBSOCKET_URI, parent=None):
+    def __init__(self, settings, port=8001, uri=DEFAULT_WEBSOCKET_URI, parent=None):
         super().__init__(parent)
         self.running = True
         self.state = PluginStatus.STARTUP
-        self.uri = uri
-        self.rate = 30
+        self.port = port
+        if port:
+            self.uri = LOCAL_HOST_URI + str(self.port)
+        else:
+            self.uri = uri
+        self.rate = 15
         self.interval = 1 / self.rate
         self.vSettings = settings
         self.converter = VTubeStudioParameterConverter(self.vSettings)
@@ -44,7 +49,10 @@ class VTubeStudioDataHandler(QThread):
         self.send_task = None
         self.recv_task = None
 
+    @Slot(int)
     def setRate(self, rate):
+        if rate <= 0:
+            return
         self.rate = rate
         self.interval = 1 / self.rate
 
@@ -66,6 +74,7 @@ class VTubeStudioDataHandler(QThread):
 
     async def main(self):
         try:
+            print(self.uri)
             async with websockets.connect(self.uri) as wb:
                 print("Connected to VTube Studio")
 
@@ -248,6 +257,27 @@ class VTubeStudioDataHandler(QThread):
             return -1
 
         return 0
+
+    @Slot(int)
+    def updatePort(self, port: int):
+        if port == self.port:
+            return
+
+        print(f"Updating vts port: {self.port} -> {port}")
+
+        self.port = port
+
+        if self.port:
+            self.uri = LOCAL_HOST_URI + str(self.port)
+        else:
+            self.uri = DEFAULT_WEBSOCKET_URI
+
+        self.state = PluginStatus.STARTUP
+
+        if self.send_task:
+            self.send_task.cancel()
+        if self.recv_task:
+            self.recv_task.cancel()
 
     def stop(self):
         self.running = False

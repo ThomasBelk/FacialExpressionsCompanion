@@ -3,9 +3,9 @@ from PySide6.QtWidgets import (
     QWidget, QLineEdit, QPushButton,
     QHBoxLayout, QLabel, QSizePolicy, QComboBox, QScrollArea, QVBoxLayout, QDialog, QCheckBox
 )
-from PySide6.QtCore import Signal, QTimer, Qt
+from PySide6.QtCore import Signal, QTimer, Qt, Slot
 from pygrabber.dshow_graph import FilterGraph
-from blendshapes import DESIRED_PARAMETERS
+from blendshapes import DESIRED_PARAMETERS, PARAMETER_TOOLTIPS
 from vtube_studio_plugin import VTubeStudioSettingsData
 import file_utils as fu
 
@@ -95,7 +95,7 @@ class ToggleButton(QPushButton):
 
 class MappingWidget(QWidget):
     mappingChanged = Signal(str, str, bool)
-    def __init__(self, selectedVTSParam=None, mapToParam=None, inverted=False, parent=None):
+    def __init__(self, selectedVTSParam=None, mapToParam=None, inverted=False, tooltip="", parent=None):
         super().__init__(parent)
         self.vtsParams = []
 
@@ -103,11 +103,13 @@ class MappingWidget(QWidget):
         self.mapToParam = mapToParam
         self.invertCheckbox = QCheckBox("Invert Parameter")
         self.invertCheckbox.setChecked(inverted)
+        self.invertCheckbox.setToolTip("Reverses the parameter range (0->1 becomes 1->0), flipping the input behavior.")
 
         self.selectedVTSParamDropDown=NoHoverScrollComboBox()
         self.selectedVTSParamDropDown.setFixedWidth(175)
         self.selectedVTSParamDropDown.addItem("None")
         self.mapToParamLabel = QLabel(self.mapToParam)
+        self.mapToParamLabel.setToolTip(tooltip)
         layout = QHBoxLayout()
         layout.addWidget(self.mapToParamLabel)
         layout.addWidget(self.selectedVTSParamDropDown)
@@ -170,7 +172,7 @@ class VTubeStudioSettingWidget(QWidget):
 
         self.widgets = []
         for i in DESIRED_PARAMETERS:
-            w = MappingWidget(self.settingsMappings.getValue(i, "None"), i, self.settingsMappings.isInverted(i))
+            w = MappingWidget(self.settingsMappings.getValue(i, "None"), i, self.settingsMappings.isInverted(i), tooltip=PARAMETER_TOOLTIPS[i])
             if len(self.vParamList) > 0:
                 w.lateSetup(self.vParamList)
             w.mappingChanged.connect(self.updateMapping)
@@ -287,13 +289,16 @@ class CameraSelector(NoHoverScrollComboBox):
 
 
 class SimpleDialog(QDialog):
-    def __init__(self, title:str, bodyText:str, width=400, height=120, useTimer=False, useLeftButton=False, useRightButton=True, leftButtonText="Accept", rightButtonText="Cancel", selector=None, parent=None):
+    def __init__(self, title:str, bodyText:str, width=400, height=120, useTimer=False, useLeftButton=False, useRightButton=True, leftButtonText="Accept", rightButtonText="Cancel", selector=None, leftButtonAction=None, rightButtonAction=None, closeEventAction=None, parent=None):
         super().__init__()
         self.bodyText = bodyText
         self.useLeftButton = useLeftButton
         self.useRightButton = useRightButton
         self.leftButtonText = leftButtonText
+        self.leftButtonAction = leftButtonAction
         self.rightButtonText = rightButtonText
+        self.rightButtonAction = rightButtonAction
+        self.closeEventAction = closeEventAction
         self.timer = QTimer()
         self.timerWord = "Closing"
         self.timer.timeout.connect(self.updateCountdown)
@@ -359,6 +364,8 @@ class SimpleDialog(QDialog):
         return self.bodyText
 
     def handleRightButton(self):
+        if self.rightButtonAction:
+            self.rightButtonAction()
         self.accept()
 
     def toggleButtonVisibility(self, button:QPushButton, active):
@@ -370,10 +377,33 @@ class SimpleDialog(QDialog):
             button.setHidden(True)
 
     def handleLeftButton(self):
-        # does python allow passing lambdas as function arguments? I think it does
-        pass
+        if self.leftButtonAction:
+            self.leftButtonAction()
+        else:
+            pass
 
     def closeEvent(self, event):
         if self.timer.isActive():
             self.timer.stop()
+        if self.closeEventAction:
+            self.closeEventAction()
         super().closeEvent(event)
+
+class PacketsPerSecondLabel(QLabel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.packetsPerSecond = 0
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setText(f"Sending {self.packetsPerSecond} packets per second.")
+        self.setToolTip("Its normal to send 15 packets per second. \nComputers with faster processing may send up to 30 packets per second.")
+
+    @Slot(int)
+    def setPacketsPerSecond(self, packetsPerSecond:int):
+        self.packetsPerSecond = packetsPerSecond
+        self.setText(f"Sending {self.packetsPerSecond} packets per second.")
+        if self.packetsPerSecond > 13:
+            self.setStyleSheet("QLabel { color: lime; }")
+        elif self.packetsPerSecond > 10:
+            self.setStyleSheet("QLabel { color: yellow; }")
+        else:
+            self.setStyleSheet("QLabel { color: red; }")
