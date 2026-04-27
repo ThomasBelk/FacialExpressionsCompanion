@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Signal, QTimer, Qt
 from pygrabber.dshow_graph import FilterGraph
-from blendshapes import DESIRED_BLENDSHAPES
+from blendshapes import DESIRED_PARAMETERS
 from vtube_studio_plugin import VTubeStudioSettingsData
 import file_utils as fu
 
@@ -169,7 +169,7 @@ class VTubeStudioSettingWidget(QWidget):
         self.hbox.setSpacing(20)
 
         self.widgets = []
-        for i in DESIRED_BLENDSHAPES:
+        for i in DESIRED_PARAMETERS:
             w = MappingWidget(self.settingsMappings.getValue(i, "None"), i, self.settingsMappings.isInverted(i))
             if len(self.vParamList) > 0:
                 w.lateSetup(self.vParamList)
@@ -276,7 +276,7 @@ class CameraSelector(NoHoverScrollComboBox):
                 return index
         return 0 # the default it to try what would be the first camera
 
-    def setCameraIndex(self, index):
+    def setCameraIndex(self, index:int):
         self.setCurrentIndex(index)
 
     def _onIndexChanged(self, index):
@@ -287,13 +287,19 @@ class CameraSelector(NoHoverScrollComboBox):
 
 
 class SimpleDialog(QDialog):
-    def __init__(self, title:str, bodyText:str, width=300, height=120, useLeftButton=False, useRightButton=True, leftButtonText="Accept", rightButtonText="Cancel", parent=None):
+    def __init__(self, title:str, bodyText:str, width=400, height=120, useTimer=False, useLeftButton=False, useRightButton=True, leftButtonText="Accept", rightButtonText="Cancel", selector=None, parent=None):
         super().__init__()
         self.bodyText = bodyText
         self.useLeftButton = useLeftButton
         self.useRightButton = useRightButton
         self.leftButtonText = leftButtonText
         self.rightButtonText = rightButtonText
+        self.timer = QTimer()
+        self.timerWord = "Closing"
+        self.timer.timeout.connect(self.updateCountdown)
+        self.timerLabel = QLabel()
+        self.timerLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.countdown_seconds = None
 
         self.setWindowTitle(title)
         self.setFixedSize(width, height)
@@ -303,6 +309,7 @@ class SimpleDialog(QDialog):
         self.label = QLabel(self.bodyText)
         self.label.setWordWrap(True)
         self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.leftButton = QPushButton(self.leftButtonText)
         self.rightButton = QPushButton(self.rightButtonText)
         self.leftButton.clicked.connect(self.handleLeftButton)
@@ -314,16 +321,42 @@ class SimpleDialog(QDialog):
 
         layout = QVBoxLayout()
         horizontal_layout = QHBoxLayout()
-        layout.addWidget(self.label)
+        layout.addWidget(self.label, 1)
+        if selector:
+            layout.addWidget(selector)
+        if useTimer:
+            layout.addWidget(self.timerLabel)
         horizontal_layout.addWidget(self.leftButton)
         horizontal_layout.addWidget(self.rightButton)
-        layout.addLayout(horizontal_layout)
+        layout.addLayout(horizontal_layout, 0)
 
         self.setLayout(layout)
+
+    def startCountdown(self, seconds: int, word="Closing"):
+        self.countdown_seconds = seconds
+        self.timerWord = word
+        self.updateCountdown()
+        self.timer.start(1000)
+
+    def updateCountdown(self):
+        if self.countdown_seconds is None:
+            return
+
+        print(self.countdown_seconds)
+        self.timerLabel.setText(f"{self.timerWord} in {self.countdown_seconds} seconds...")
+
+        if self.countdown_seconds <= 0:
+            self.timer.stop()
+            return
+
+        self.countdown_seconds -= 1
 
     def setBodyText(self, bodyText:str):
         self.bodyText = bodyText
         self.label.setText(self.bodyText)
+
+    def getBodyText(self):
+        return self.bodyText
 
     def handleRightButton(self):
         self.accept()
@@ -339,3 +372,8 @@ class SimpleDialog(QDialog):
     def handleLeftButton(self):
         # does python allow passing lambdas as function arguments? I think it does
         pass
+
+    def closeEvent(self, event):
+        if self.timer.isActive():
+            self.timer.stop()
+        super().closeEvent(event)

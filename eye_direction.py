@@ -49,6 +49,28 @@ def eye_direction_from_landmarks(landmarks, iris_center_id, left_id, right_id, t
 def clamp01(value):
     return max(0.0, min(1.0, value))
 
+def vts_eye_enum(x, y, deadzone=0.1):
+    vert = None
+    horiz = None
+    if y > 0.5 + deadzone:
+        vert = "up"
+    elif y < 0.5 - deadzone:
+        vert = "down"
+
+    if x < 0.5 - deadzone:
+        horiz = "right"
+    elif x > 0.5 + deadzone:
+        horiz = "left"
+
+    if vert and horiz:
+        return f"{vert}{horiz}"
+    elif vert:
+        return vert
+    elif horiz:
+        return horiz
+
+    return "center"
+
 
 class EyeTracker:
     def __init__(self, x_adapt=0.05, y_adapt=0.01, smooth_alpha=0.2, warmup_frames=90):

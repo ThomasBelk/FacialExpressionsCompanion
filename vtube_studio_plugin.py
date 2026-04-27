@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QDialog, QLabel, QPushButton, QVBoxLayout, QHBoxLa
 import file_utils as fu
 from enum import Enum, auto
 
-from blendshapes import DESIRED_BLENDSHAPES
+from blendshapes import DESIRED_PARAMETERS
 
 PLUGIN_NAME = "Real Facial Expressions (Hytale Expression Tracking Plugin)"
 PLUGIN_AUTHOR = "Thomas Belk"
@@ -27,7 +27,7 @@ class VTubeStudioDataHandler(QThread):
     studio_tracking_ready = Signal(object)
     parameter_list_ready = Signal(list)
     accept_auth_notification = Signal(bool)
-    vts_error = Signal(str)
+    vts_error = Signal(str, bool)
 
     def __init__(self, settings, uri=DEFAULT_WEBSOCKET_URI, parent=None):
         super().__init__(parent)
@@ -41,8 +41,28 @@ class VTubeStudioDataHandler(QThread):
         self.vParamList = []
         self.authFailCount = 0
 
+        self.send_task = None
+        self.recv_task = None
+
+    def setRate(self, rate):
+        self.rate = rate
+        self.interval = 1 / self.rate
+
     def run(self):
-        asyncio.run(self.main())
+        asyncio.run(self.mainLoop())
+
+    async def mainLoop(self):
+        while self.running:
+            result = await self.main()
+
+            if not self.running:
+                self.vts_error.emit("", False)
+                break
+
+            if result == -1:
+                self.state = PluginStatus.STARTUP
+                await asyncio.sleep(5)
+                self.vts_error.emit("", False)
 
     async def main(self):
         try:
@@ -62,18 +82,18 @@ class VTubeStudioDataHandler(QThread):
                             await self.authRequest(wb)
 
                         case PluginStatus.SEND_AND_RECEIVE_DATA:
-                            await self.run_data_loops(wb)
-                            return  # exit after loops stop
+                            result = await self.run_data_loops(wb)
+                            return result
 
                         case PluginStatus.PERMISSIONS_ERROR:
                             m = "Error receiving permissions from VTube Studio. Likely because you denied permissions to the plugin in VTube Studio."
-                            self.vts_error.emit(m)
-                            return
+                            self.vts_error.emit(m, True)
+                            return -1
 
         except Exception as e:
-            m = "Error connecting to VTube Studio, make sure VTubeStudio is open. Error message: " + str(e)
-            self.vts_error.emit(m)
-
+            m = "Error connecting to VTube Studio, make sure VTubeStudio is open and plugins are enabled. Error message: " + str(e)
+            self.vts_error.emit(m, True)
+            return -1
 
     async def initialConnection(self, wb):
         print("Requesting API state...")
@@ -116,10 +136,9 @@ class VTubeStudioDataHandler(QThread):
         try:
             self.vSettings.setToken(response["data"]["authenticationToken"])
             self.state = PluginStatus.AWAIT_PERMISSIONS
-            ## close window cause we received the token
-            # window.accept()
-        except KeyError:
-            print("Key error")
+        except KeyError as e:
+            m = "Error getting auth token from VTube Studio. This could be the result of you rejecting permissions in VTube Studio. Error: " + str(e)
+            self.vts_error.emit(m, True)
 
     async def authRequest(self, wb):
         print("Sending auth request...")
@@ -152,6 +171,8 @@ class VTubeStudioDataHandler(QThread):
     async def run_data_loops(self, wb):
         print("Starting data loops...")
 
+        loop_error = {"failed": False}
+
         async def send_loop():
             while self.running:
                 try:
@@ -166,39 +187,76 @@ class VTubeStudioDataHandler(QThread):
                     elapsed = time.perf_counter() - start
                     await asyncio.sleep(max(0.0, self.interval - elapsed))
 
+                except asyncio.CancelledError:
+                    break
+
                 except Exception as e:
-                    print("Send error:", e)
+                    loop_error["failed"] = True
+                    self.vts_error.emit(
+                        "Failed to send parameter data request to VTube Studio. Error: " + str(e),
+                        True
+                    )
                     break
 
         async def receive_loop():
             while self.running:
                 try:
-                    msg = await wb.recv()
+                    msg = await asyncio.wait_for(wb.recv(), timeout=1.0)
                     response = json.loads(msg)
 
                     msg_type = response.get("messageType")
 
                     if msg_type == "InputParameterListResponse":
                         processedData = self.converter.convert(response["data"])
+
                         if len(self.vParamList) < 1:
                             self.vParamList = self.converter.getParameterNamesAsList(response["data"])
                             self.parameter_list_ready.emit(self.vParamList)
-                            print("emitting list")
                         else:
                             self.studio_tracking_ready.emit(processedData)
 
-                    else:
-                        print(msg_type)
-                        pass
+                    elif msg_type == "APIError":
+                        loop_error["failed"] = True
+                        self.vts_error.emit("VTubeStudio API error received.", True)
+                        break
 
-                except Exception as e:
-                    print("Receive error:", e)
+                except asyncio.TimeoutError:
+                    if not self.running:
+                        break
+                    continue
+
+                except asyncio.CancelledError:
                     break
 
-        await asyncio.gather(send_loop(), receive_loop())
+                except Exception as e:
+                    loop_error["failed"] = True
+                    self.vts_error.emit(
+                        "Failed to receive parameter data from VTube Studio. Error: " + str(e),
+                        True
+                    )
+                    break
+
+        self.send_task = asyncio.create_task(send_loop())
+        self.recv_task = asyncio.create_task(receive_loop())
+
+        await asyncio.gather(
+            self.send_task,
+            self.recv_task
+        )
+
+        if loop_error["failed"]:
+            return -1
+
+        return 0
 
     def stop(self):
         self.running = False
+        if self.send_task:
+            self.send_task.cancel()
+        if self.recv_task:
+            self.recv_task.cancel()
+        self.quit()
+        self.wait()
 
 class VTubeStudioPluginAuthWindow(QDialog):
     def __init__(self):
@@ -231,7 +289,7 @@ class VTubeStudioSettingsData:
         self.settings = settings
         self.token = settings.value("VTubeStudioToken", None)
 
-        self.mappings = {i: {"value": None, "inverted": False} for i in DESIRED_BLENDSHAPES}
+        self.mappings = {i: {"value": None, "inverted": False} for i in DESIRED_PARAMETERS}
         raw = self.settings.value("VTubeStudioMappings", "{}")
 
         if raw is None:
@@ -310,9 +368,9 @@ class VTubeStudioParameterConverter:
             for group in ("customParameters", "defaultParameters")
             for p in data.get(group, [])
         }
-        for i in DESIRED_BLENDSHAPES:
+        for i in DESIRED_PARAMETERS:
             vParamName = self.mappings.getValue(i)
-            if i is None:
+            if vParamName is None:
                 continue
             vParam = param_map.get(vParamName)
 
@@ -320,7 +378,6 @@ class VTubeStudioParameterConverter:
                 ret[i] = self.normalizeParam(vParam["value"], vParam["min"], vParam["max"])
                 if self.mappings.isInverted(i):
                     ret[i] = self.invertParam(ret[i])
-
 
         return ret
 

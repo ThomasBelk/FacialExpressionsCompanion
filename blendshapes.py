@@ -5,6 +5,10 @@ DESIRED_BLENDSHAPES = [
     "eyeBlinkLeft", "eyeBlinkRight"
 ]
 
+VTS_EYE_PARAMETERS = ["leftEyeX", "rightEyeX", "leftEyeY", "rightEyeY"]
+
+DESIRED_PARAMETERS = [*DESIRED_BLENDSHAPES, *VTS_EYE_PARAMETERS]
+
 
 
 def processBlendshapes(blendshapes):
