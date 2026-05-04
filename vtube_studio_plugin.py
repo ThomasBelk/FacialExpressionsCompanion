@@ -33,6 +33,7 @@ class VTubeStudioDataHandler(QThread):
     def __init__(self, settings, port=8001, uri=DEFAULT_WEBSOCKET_URI, parent=None):
         super().__init__(parent)
         self.running = True
+        self.running2 = False # feels insane but has been useful for exiting properly.
         self.state = PluginStatus.STARTUP
         self.port = port
         if port:
@@ -57,7 +58,9 @@ class VTubeStudioDataHandler(QThread):
         self.interval = 1 / self.rate
 
     def run(self):
+        self.running2 = True
         asyncio.run(self.mainLoop())
+        self.running2 = False
 
     async def mainLoop(self):
         while self.running:
@@ -69,13 +72,16 @@ class VTubeStudioDataHandler(QThread):
 
             if result == -1:
                 self.state = PluginStatus.STARTUP
-                await asyncio.sleep(5)
+                for _ in range(50):  # 5 seconds total
+                    if not self.running:
+                        break
+                    await asyncio.sleep(0.1)
                 self.vts_error.emit("", False)
 
     async def main(self):
         try:
             print(self.uri)
-            async with websockets.connect(self.uri) as wb:
+            async with websockets.connect(self.uri, open_timeout=3, close_timeout=1) as wb:
                 print("Connected to VTube Studio")
 
                 while self.running:
@@ -281,6 +287,10 @@ class VTubeStudioDataHandler(QThread):
 
     def stop(self):
         self.running = False
+        while self.running2:
+            print("Waiting for VTube Studio Plugin main loop to stop...")
+            self.msleep(5)
+        print("Stopping VTube Studio Thread")
         if self.send_task:
             self.send_task.cancel()
         if self.recv_task:

@@ -227,6 +227,9 @@ class MainWindow(QMainWindow):
     def handleVTSError(self, message, flag):
         if not flag and self.vtsErrorWindow is not None:
             self.vtsErrorWindow.setVisible(False)
+        # make sure that the error does not block switching tracking modes.
+        elif self.vtsErrorWindow is not None and self.switchTrackingModesWindow is not None and self.switchTrackingModesWindow.isVisible():
+            self.vtsErrorWindow.setVisible(False)
         elif not flag and self.vtsErrorWindow is None:
             return
         elif self.vtsErrorWindow and self.vtsErrorWindow.isVisible() and message is not self.vtsErrorWindow.getBodyText():
@@ -239,6 +242,9 @@ class MainWindow(QMainWindow):
 
     def handleCameraError(self, message, flag):
         if not flag and self.cameraErrorWindow is not None:
+            self.cameraErrorWindow.setVisible(False)
+        # make sure that the error does not block switching tracking modes.
+        elif self.cameraErrorWindow is not None and self.switchTrackingModesWindow is not None and self.switchTrackingModesWindow.isVisible():
             self.cameraErrorWindow.setVisible(False)
         elif not flag and self.cameraErrorWindow is None:
             # the flag being false means I want the error window not to open, so if there is no camera window i don't
