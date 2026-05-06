@@ -210,6 +210,7 @@ class MainWindow(QMainWindow):
             self.camera = None
 
     def startVTubeStudioThread(self):
+        self.closeAllDialogs()
         self.vtubeStudioThread = VTubeStudioDataHandler(self.vTubeStudioSettingsData, port=self.vtsPort)
         if self.vTubeStudioSettingsWidget:
             self.vtubeStudioThread.parameter_list_ready.connect(self.vTubeStudioSettingsWidget.updateVTubeStudioParamOptions)
@@ -220,18 +221,48 @@ class MainWindow(QMainWindow):
         self.vtubeStudioThread.start()
 
     def stopVTubeStudioThread(self):
+        self.closeAllDialogs()
         if self.vtubeStudioThread:
             self.vtubeStudioThread.stop()
             self.vtubeStudioThread = None
 
+    def stopSenderThread(self):
+        if self.senderThread:
+            try:
+                self.setUDPTarget.disconnect(self.sender.set_target)
+            except (RuntimeError, TypeError):
+                pass
+
+            try:
+                self.sendUDPPacket.disconnect(self.sender.send_packet)
+            except (RuntimeError, TypeError):
+                pass
+
+            self.senderThread.quit()
+            self.senderThread.wait()
+
+    def closeAllDialogs(self):
+        if self.vtsErrorWindow:
+            self.vtsErrorWindow.close()
+            self.vtsErrorWindow = None
+        if self.cameraErrorWindow:
+            self.cameraErrorWindow.close()
+            self.cameraErrorWindow = None
+        if self.switchTrackingModesWindow:
+            self.switchTrackingModesWindow.close()
+            self.switchTrackingModesWindow = None
+
+
     def handleVTSError(self, message, flag):
-        if not flag and self.vtsErrorWindow is not None:
+        updateDialogOpen = hasattr(self, "updateDialog") and self.updateDialog.isVisible()
+        switchModeDialogOpen = self.switchTrackingModesWindow is not None and self.switchTrackingModesWindow.isVisible()
+        cameraWindowExists = self.cameraErrorWindow is not None
+
+        # make sure that error window does not block another window
+        if cameraWindowExists and (not flag or updateDialogOpen or switchModeDialogOpen):
             self.vtsErrorWindow.setVisible(False)
-        # make sure that the error does not block switching tracking modes.
-        elif self.vtsErrorWindow is not None and self.switchTrackingModesWindow is not None and self.switchTrackingModesWindow.isVisible():
-            self.vtsErrorWindow.setVisible(False)
-        elif not flag and self.vtsErrorWindow is None:
-            return
+        elif not cameraWindowExists and (not flag or updateDialogOpen or switchModeDialogOpen):
+            return # no change
         elif self.vtsErrorWindow and self.vtsErrorWindow.isVisible() and message is not self.vtsErrorWindow.getBodyText():
             self.vtsErrorWindow.setBodyText(message + " Attempting to restart the VTS connection.")
             self.vtsErrorWindow.startCountdown(5, "Retrying")
@@ -240,16 +271,17 @@ class MainWindow(QMainWindow):
             self.vtsErrorWindow.startCountdown(5, "Retrying")
             self.vtsErrorWindow.exec()
 
+    # lots of duplicated code here, will have to create a dialog/modal manager at some point as well.
     def handleCameraError(self, message, flag):
-        if not flag and self.cameraErrorWindow is not None:
+        updateDialogOpen = hasattr(self, "updateDialog") and self.updateDialog.isVisible()
+        switchModeDialogOpen = self.switchTrackingModesWindow is not None and self.switchTrackingModesWindow.isVisible()
+        cameraWindowExists = self.cameraErrorWindow is not None
+
+        # make sure that error window does not block another window
+        if cameraWindowExists and (not flag or updateDialogOpen or switchModeDialogOpen):
             self.cameraErrorWindow.setVisible(False)
-        # make sure that the error does not block switching tracking modes.
-        elif self.cameraErrorWindow is not None and self.switchTrackingModesWindow is not None and self.switchTrackingModesWindow.isVisible():
-            self.cameraErrorWindow.setVisible(False)
-        elif not flag and self.cameraErrorWindow is None:
-            # the flag being false means I want the error window not to open, so if there is no camera window i don't
-            # want to do anything.
-            return
+        elif not cameraWindowExists and (not flag or updateDialogOpen or switchModeDialogOpen):
+            return # no change
         elif self.cameraErrorWindow and self.cameraErrorWindow.isVisible() and message is not self.cameraErrorWindow.getBodyText():
             self.cameraErrorWindow.setBodyText(message)
             self.cameraErrorWindow.startCountdown(5, "Retrying")
@@ -398,18 +430,9 @@ class MainWindow(QMainWindow):
 
 
     def closeEvent(self, event: QCloseEvent):
-        if self.camera:
-            self.stopCameraThread()
-        if self.vtubeStudioThread:
-            self.stopVTubeStudioThread()
-        if self.senderThread:
-            try:
-                self.setUDPTarget.disconnect()
-                self.sendUDPPacket.disconnect()
-            except:
-                pass
-            self.senderThread.quit()
-            self.senderThread.wait()
+        self.stopCameraThread()
+        self.stopVTubeStudioThread()
+        self.stopSenderThread()
 
         self.save()
 
@@ -468,6 +491,10 @@ class MainWindow(QMainWindow):
             self.switchTrackingModesWindow.exec()
 
     def switchTrackingModes(self):
+        self.stopCameraThread()
+        self.stopVTubeStudioThread()
+        self.stopSenderThread()
+
         self.use_vtube_studio_tracking = not self.use_vtube_studio_tracking
         if self.switchTrackingModesWindow and self.switchTrackingModesWindow.isVisible():
             self.switchTrackingModesWindow.setVisible(False)
@@ -479,7 +506,7 @@ class MainWindow(QMainWindow):
 
     def restartApp(self):
         fu.run_temp_launcher(sys.executable)
-        QApplication.quit()
+        self.close()
 
 
 def main():
@@ -496,8 +523,8 @@ def main():
 
     url = get_update_info()
     if url:
-        dialog = update_checker.UpdateDialog(url)
-        dialog.exec()
+        window.updateDialog = update_checker.UpdateDialog(url)
+        window.updateDialog.exec()
     exit_code = app.exec()
 
     sys.exit(exit_code)

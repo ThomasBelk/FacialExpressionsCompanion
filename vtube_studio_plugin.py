@@ -287,6 +287,7 @@ class VTubeStudioDataHandler(QThread):
 
     def stop(self):
         self.running = False
+        self.vts_error.disconnect()
         while self.running2:
             print("Waiting for VTube Studio Plugin main loop to stop...")
             self.msleep(5)
